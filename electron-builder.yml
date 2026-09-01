@@ -1,0 +1,42 @@
+appId: io.github.piwin-studio
+productName: PiWin Studio
+# Reuse the Electron runtime installed by pnpm. This avoids a second, unreliable
+# download during Windows packaging and keeps the packaged runtime identical to
+# the one used for local verification.
+electronDist: node_modules/electron/dist
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - node_modules/@earendil-works/**
+npmRebuild: false
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  # arch is passed on the CLI (--arm64 / --x64); each CI runner builds its own arch
+  # so node-pty is always compiled natively
+  target:
+    - dmg
+    - zip
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  identity: null
+  darkModeSupport: true
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+dmg:
+  title: PiWin Studio
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
