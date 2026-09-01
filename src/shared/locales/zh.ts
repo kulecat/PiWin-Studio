@@ -131,6 +131,17 @@ export const zh = {
     executionUnavailable: "不可用",
     executionHint:
       "在启动 PiWin Studio 前设置 PIWIN_EXECUTION_RUNNER 为 auto、powershell、wsl 或 docker。Docker 永不自动选择，因为它会挂载当前工作区。",
+    dockerSandboxTitle: "Docker 受限执行 Profile",
+    dockerSandboxSummary: "工作区：{workspace} · 网络：{network} · 内存 {memory} · CPU {cpus} · 进程 {pids}",
+    dockerWorkspaceReadonly: "只读（write / edit 已禁用）",
+    dockerWorkspaceReadwrite: "可写（仅限挂载工作区）",
+    dockerNetworkNone: "禁用（默认）",
+    dockerNetworkAllow: "已显式允许",
+    dockerSandboxControls: "容器根文件系统只读、移除 Linux capabilities、禁止提权、隔离 IPC，并只提供临时可写目录。",
+    dockerSandboxScope:
+      "当前阶段仅隔离 Docker 路由的命令。自定义扩展仍在 PiWin 宿主进程运行；使用 Git worktree 才能把代码变更与主分支隔离。",
+    dockerSandboxConfig:
+      "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
     sandboxTitle: "云端虚拟机（E2B）",
     sandboxIntro:
       "每个任务可以拥有独立的云端 Linux 桌面虚拟机，执行世界切换到 VM 后，你将可以实时查看桌面与接管操作。",

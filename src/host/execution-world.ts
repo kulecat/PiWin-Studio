@@ -28,7 +28,7 @@ import {
   warmAgentShell,
   writeAgentShell,
 } from "./agent-shell";
-import { resolveLocalPtyInvocation } from "./windows-execution";
+import { isDockerReadOnlyProfileActive, resolveLocalPtyInvocation } from "./windows-execution";
 import { runAuditedCommand } from "./audit";
 
 export type ExecutionWorld = "local" | "vm";
@@ -330,6 +330,11 @@ const readOps: ReadOperations = {
 const writeOps: WriteOperations = {
   writeFile: async (p, content) => {
     if (world === "local") {
+      if (isDockerReadOnlyProfileActive()) {
+        throw new Error(
+          "Docker read-only profile is active. write/edit are disabled until PIWIN_DOCKER_WORKSPACE_ACCESS=readwrite is set before launching PiWin.",
+        );
+      }
       const { writeFile } = await import("node:fs/promises");
       await writeFile(p, content, "utf8");
       return;
@@ -338,6 +343,11 @@ const writeOps: WriteOperations = {
   },
   mkdir: async (dir) => {
     if (world === "local") {
+      if (isDockerReadOnlyProfileActive()) {
+        throw new Error(
+          "Docker read-only profile is active. write/edit are disabled until PIWIN_DOCKER_WORKSPACE_ACCESS=readwrite is set before launching PiWin.",
+        );
+      }
       const { mkdir } = await import("node:fs/promises");
       await mkdir(dir, { recursive: true });
       return;

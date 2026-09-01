@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { delimiter, join } from "node:path";
 import type {
+  DockerSandboxProfile,
   ExecutionEnvironmentPayload,
   ExecutionRunnerStatus,
   WindowsExecutionRunner,
@@ -28,6 +29,15 @@ export interface PtyInvocation {
 
 const RUNNER_ENV = "PIWIN_EXECUTION_RUNNER";
 const DOCKER_IMAGE_ENV = "PIWIN_DOCKER_IMAGE";
+const DOCKER_WORKSPACE_ACCESS_ENV = "PIWIN_DOCKER_WORKSPACE_ACCESS";
+const DOCKER_NETWORK_ENV = "PIWIN_DOCKER_NETWORK";
+const DOCKER_MEMORY_ENV = "PIWIN_DOCKER_MEMORY";
+const DOCKER_CPUS_ENV = "PIWIN_DOCKER_CPUS";
+const DOCKER_PIDS_LIMIT_ENV = "PIWIN_DOCKER_PIDS_LIMIT";
+const DEFAULT_DOCKER_IMAGE = "node:22-bookworm-slim";
+const DEFAULT_DOCKER_MEMORY = "2g";
+const DEFAULT_DOCKER_CPUS = "2";
+const DEFAULT_DOCKER_PIDS_LIMIT = 128;
 
 interface WslProbe {
   available: boolean;
@@ -46,6 +56,53 @@ function configuredRunner(): "auto" | WindowsRunnerKind {
   const value = process.env[RUNNER_ENV]?.trim().toLowerCase();
   if (value === "powershell" || value === "wsl" || value === "docker") return value;
   return "auto";
+}
+
+function validDockerMemory(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && /^\d+(?:\.\d+)?[bkmg]?$/.test(normalized) ? normalized : undefined;
+}
+
+function validDockerCpuCount(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized || !/^\d+(?:\.\d+)?$/.test(normalized)) return undefined;
+  return Number(normalized) > 0 ? normalized : undefined;
+}
+
+function validDockerPidsLimit(value: string | undefined): number | undefined {
+  const normalized = value?.trim();
+  if (!normalized || !/^\d+$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/**
+ * The Docker runner is a command-execution boundary, not a claim that every
+ * host-side Pi extension or file operation is sandboxed. Keep this profile
+ * deterministic and opt-in: Docker is never selected by auto mode.
+ */
+export function getDockerSandboxProfile(): DockerSandboxProfile {
+  const workspaceAccess =
+    process.env[DOCKER_WORKSPACE_ACCESS_ENV]?.trim().toLowerCase() === "readwrite"
+      ? "readwrite"
+      : "readonly";
+  const network = process.env[DOCKER_NETWORK_ENV]?.trim().toLowerCase() === "allow" ? "allow" : "none";
+  const memory = validDockerMemory(process.env[DOCKER_MEMORY_ENV]) ?? DEFAULT_DOCKER_MEMORY;
+  const cpus = validDockerCpuCount(process.env[DOCKER_CPUS_ENV]) ?? DEFAULT_DOCKER_CPUS;
+  const pidsLimit = validDockerPidsLimit(process.env[DOCKER_PIDS_LIMIT_ENV]) ?? DEFAULT_DOCKER_PIDS_LIMIT;
+  return {
+    image: process.env[DOCKER_IMAGE_ENV]?.trim() || DEFAULT_DOCKER_IMAGE,
+    workspaceAccess,
+    network,
+    memory,
+    cpus,
+    pidsLimit,
+  };
+}
+
+/** A Docker read-only profile also disables host-side Pi write/edit tools. */
+export function isDockerReadOnlyProfileActive(): boolean {
+  return process.platform === "win32" && configuredRunner() === "docker" && getDockerSandboxProfile().workspaceAccess === "readonly";
 }
 
 function probeWsl(): WslProbe {
@@ -130,7 +187,14 @@ function checkDocker(): ExecutionRunnerStatus {
   });
   const version = result.stdout?.trim();
   if (result.status === 0 && version) {
-    return { kind: "docker", available: true, detail: `Docker daemon ${version} (explicit opt-in)` };
+    const profile = getDockerSandboxProfile();
+    const workspace = profile.workspaceAccess === "readonly" ? "read-only workspace" : "workspace writes allowed";
+    const network = profile.network === "none" ? "network disabled" : "network explicitly allowed";
+    return {
+      kind: "docker",
+      available: true,
+      detail: `Docker daemon ${version} · ${workspace} · ${network} · ${profile.memory} / ${profile.cpus} CPU / ${profile.pidsLimit} PIDs`,
+    };
   }
   return {
     kind: "docker",
@@ -162,18 +226,46 @@ function wslInvocation(command: string, cwd: string): PtyInvocation {
 }
 
 function dockerInvocation(command: string, cwd: string): PtyInvocation {
-  const image = process.env[DOCKER_IMAGE_ENV] || "node:22-bookworm-slim";
+  const profile = getDockerSandboxProfile();
+  const workspaceMount = ["type=bind", `src=${cwd}`, "dst=/workspace"];
+  if (profile.workspaceAccess === "readonly") workspaceMount.push("readonly");
   return {
     file: "docker.exe",
     args: [
       "run",
       "--rm",
       "-i",
+      "--init",
       "--workdir",
       "/workspace",
+      "--network",
+      profile.network === "none" ? "none" : "bridge",
+      "--read-only",
+      "--tmpfs",
+      "/tmp:rw,nosuid,nodev,size=512m",
+      "--tmpfs",
+      "/var/tmp:rw,nosuid,nodev,size=128m",
+      "--tmpfs",
+      "/home/node:rw,nosuid,nodev,size=256m",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges:true",
+      "--ipc",
+      "none",
+      "--pids-limit",
+      String(profile.pidsLimit),
+      "--memory",
+      profile.memory,
+      "--memory-swap",
+      profile.memory,
+      "--cpus",
+      profile.cpus,
+      "--user",
+      "node",
       "--mount",
-      `type=bind,src=${cwd},dst=/workspace`,
-      image,
+      workspaceMount.join(","),
+      profile.image,
       "sh",
       "-lc",
       command,
@@ -236,5 +328,11 @@ export function inspectExecutionEnvironment(): ExecutionEnvironmentPayload {
           ? "wsl"
           : "powershell"
         : requestedRunner;
-  return { platform: process.platform, configuredRunner: requestedRunner, effectiveRunner, runners };
+  return {
+    platform: process.platform,
+    configuredRunner: requestedRunner,
+    effectiveRunner,
+    runners,
+    dockerSandbox: process.platform === "win32" ? getDockerSandboxProfile() : undefined,
+  };
 }

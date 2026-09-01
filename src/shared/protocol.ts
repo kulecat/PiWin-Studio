@@ -88,12 +88,26 @@ export interface ExecutionRunnerStatus {
   detail: string;
 }
 
+/** Effective restrictions applied to commands routed through Docker on Windows. */
+export interface DockerSandboxProfile {
+  image: string;
+  /** readonly rejects write/edit tools and mounts the workspace read-only. */
+  workspaceAccess: "readonly" | "readwrite";
+  /** none is the safe default; allow must be selected explicitly. */
+  network: "none" | "allow";
+  memory: string;
+  cpus: string;
+  pidsLimit: number;
+}
+
 /** Current local-execution selection plus live prerequisite checks. */
 export interface ExecutionEnvironmentPayload {
   platform: NodeJS.Platform;
   configuredRunner: "auto" | WindowsExecutionRunner;
   effectiveRunner: Exclude<ExecutionRunner, "auto">;
   runners: ExecutionRunnerStatus[];
+  /** Present on Windows. Applies only when the Docker runner is selected. */
+  dockerSandbox?: DockerSandboxProfile;
 }
 
 export interface SessionListItem {

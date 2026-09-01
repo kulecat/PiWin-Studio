@@ -789,6 +789,35 @@ function ExecutionTab(): React.JSX.Element {
               {t("settings.executionRequested", { runner: runnerLabel[environment.configuredRunner] })}
             </div>
           </div>
+          {environment.dockerSandbox && (
+            <div className="rounded-xl border border-border bg-bg px-3 py-3 text-xs text-fg-secondary">
+              <div className="text-xs font-medium text-fg">{t("settings.dockerSandboxTitle")}</div>
+              <div className="pt-1 text-[11px] leading-relaxed text-fg-muted">
+                {t("settings.dockerSandboxSummary", {
+                  workspace:
+                    environment.dockerSandbox.workspaceAccess === "readonly"
+                      ? t("settings.dockerWorkspaceReadonly")
+                      : t("settings.dockerWorkspaceReadwrite"),
+                  network:
+                    environment.dockerSandbox.network === "none"
+                      ? t("settings.dockerNetworkNone")
+                      : t("settings.dockerNetworkAllow"),
+                  memory: environment.dockerSandbox.memory,
+                  cpus: environment.dockerSandbox.cpus,
+                  pids: environment.dockerSandbox.pidsLimit,
+                })}
+              </div>
+              <div className="pt-2 text-[11px] leading-relaxed text-fg-muted">
+                {t("settings.dockerSandboxControls")}
+              </div>
+              <div className="pt-1.5 text-[11px] leading-relaxed text-warning">
+                {t("settings.dockerSandboxScope")}
+              </div>
+              <div className="selectable pt-2 text-[10px] leading-relaxed text-fg-muted">
+                {t("settings.dockerSandboxConfig")}
+              </div>
+            </div>
+          )}
           <div className="space-y-2">
             {environment.runners.map((runner) => (
               <div

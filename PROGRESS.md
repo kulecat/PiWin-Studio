@@ -91,6 +91,25 @@ and recoverable worktree-based agent tasks.
   selects PowerShell when that probe fails or times out. Explicit `wsl` mode
   remains available for users who have repaired their WSL setup.
 
+### 2026-09-01 — Docker restricted command profile
+
+- Added a Windows Docker execution profile that is opt-in through
+  `PIWIN_EXECUTION_RUNNER=docker`; Docker is still never selected silently.
+- The default profile has no network, a read-only container filesystem and
+  workspace mount, dropped Linux capabilities, no-new-privileges, isolated
+  IPC, a non-root `node` user, limited PIDs, memory and CPUs, and small
+  writable temporary directories only. Workspace writes require an explicit
+  `readwrite` setting before launch.
+- The active profile is visible in **Settings → Local execution environment**.
+  It can be configured before launch with `PIWIN_DOCKER_WORKSPACE_ACCESS`,
+  `PIWIN_DOCKER_NETWORK`, `PIWIN_DOCKER_MEMORY`, `PIWIN_DOCKER_CPUS`, and
+  `PIWIN_DOCKER_PIDS_LIMIT`.
+- In the default read-only profile, direct local `write` and `edit` tools are
+  rejected instead of silently writing to the host-mounted workspace.
+- Documented the boundary precisely: this is restricted execution for Docker
+  commands, not yet an all-tools sandbox. Custom extensions remain host-side;
+  Git worktrees are still the planned isolation boundary for code changes.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -114,9 +133,14 @@ and recoverable worktree-based agent tasks.
 - Built runner health UI and audit implementation with `pnpm build`.
 - Rebuilt after the WSL readiness fallback change with `pnpm build`,
   `pnpm typecheck`, and `pnpm dist:win`.
+- Verified the generated Docker command arguments with a compiled profile
+  probe, including read-only mounts, default network denial, capabilities,
+  privilege, IPC, and resource controls.
+- Rebuilt after the Docker restricted command profile with `pnpm typecheck`,
+  `pnpm build`, and `pnpm dist:win`.
 - Final installer SHA-256:
-  `030895AD1167A0B8FB3B59220BA05F081FBA12E775F5E6737293AB0666399EF0`
-  (`PiWin Studio-0.1.3-win-x64.exe`, 133,891,120 bytes).
+  `0BCE2BF18D617089F5E16995E1BB50BA37FF044DEA551EA21CFF5AB15DC5559E`
+  (`PiWin Studio-0.1.4-win-x64.exe`, 133,893,623 bytes).
 
 ## Known limitations / blockers
 
@@ -124,25 +148,27 @@ and recoverable worktree-based agent tasks.
   not finish. In auto mode PiWin now uses PowerShell until the local WSL setup
   is repaired. The WSL proxy warning should be investigated separately if WSL
   support is needed.
-- Docker Desktop is not currently available on this machine, so the Docker
-  runner has not yet been executed.
+- Docker Desktop is not currently available on this machine, so the restricted
+  Docker invocation has been compiled and inspected but not yet run against a
+  real daemon.
 - The generated installer is not Authenticode-signed. Windows may show an
   unknown-publisher warning until a release code-signing certificate is
   configured.
 - The packaged desktop UI has not yet had a manual end-to-end smoke test on a
   clean user profile.
 - The current local PowerShell runner is a convenience runner, not a security
-  boundary. The existing policy gate covers tools and commands, but WSL2/Docker
-  containment and path/network policy controls are still pending.
+  boundary. Docker now restricts routed commands, but all file-tool routing,
+  WSL2 containment, and path/network policy controls remain pending.
 
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer.
 2. Extend the existing allow / ask / deny gate with workspace-path and network
    destination rules.
-3. Add Docker/WSL2 containment profiles and make host execution explicit in
-   the UI.
-4. Persist isolated worktree tasks, checkpoints, merge state, and recovery
+3. Route all file operations through an isolated Docker + Git-worktree task,
+   then add a recovery flow for changes.
+4. Add WSL2 containment profiles and explicit host-execution confirmation.
+5. Persist isolated worktree tasks, checkpoints, merge state, and recovery
    information for multi-agent workflows.
 
 ## Working agreement
