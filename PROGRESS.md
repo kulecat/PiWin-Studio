@@ -91,6 +91,16 @@ and recoverable worktree-based agent tasks.
   selects PowerShell when that probe fails or times out. Explicit `wsl` mode
   remains available for users who have repaired their WSL setup.
 
+### 2026-09-01 — Source-control baseline
+
+- Initialized the local `main` branch and recorded the Bivor-derived PiWin
+  Studio baseline in commit `ef0fbaa` with the upstream MIT license and
+  provenance notices included.
+- Configured `https://github.com/kulecat/PiWin-Studio.git` as `origin`.
+  The first push is pending because this machine could not connect to
+  `github.com:443`; no source, dependency directory, build output, or local
+  environment file was included in the commit.
+
 ## Verification completed
 
 - `pnpm install --frozen-lockfile`
