@@ -130,18 +130,18 @@ export const zh = {
     executionReady: "可用",
     executionUnavailable: "不可用",
     executionHint:
-      "在启动 PiWin Studio 前设置 PIWIN_EXECUTION_RUNNER 为 auto、powershell、wsl 或 docker。Docker 永不自动选择，因为它会挂载当前工作区。",
+      "在启动 PiWin Studio 前设置 PIWIN_EXECUTION_RUNNER 为 auto、powershell、wsl 或 docker。Docker 永不自动选择，因为可写模式需要受控任务副本。",
     dockerSandboxTitle: "Docker 受限执行 Profile",
     dockerSandboxSummary: "工作区：{workspace} · 网络：{network} · 内存 {memory} · CPU {cpus} · 进程 {pids}",
     dockerWorkspaceReadonly: "只读（write / edit 已禁用）",
-    dockerWorkspaceReadwrite: "可写（仅限挂载工作区）",
+    dockerWorkspaceReadwrite: "可写（私有任务副本）",
     dockerNetworkNone: "禁用（默认）",
     dockerNetworkAllow: "已显式允许",
     dockerSandboxControls: "容器根文件系统只读、移除 Linux capabilities、禁止提权、隔离 IPC，并只提供临时可写目录。",
     dockerSandboxScope:
-      "当前阶段仅隔离 Docker 路由的命令。自定义扩展仍在 PiWin 宿主进程运行；使用 Git worktree 才能把代码变更与主分支隔离。",
+      "Docker 可写命令使用私有任务 volume，随后经人工确认导入补丁。宿主 write/edit 与自定义扩展尚未路由进容器。",
     dockerSandboxConfig:
-      "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
+      "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow。可写模式需要一个全新的 PiWin 任务 worktree；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
     sandboxTitle: "云端虚拟机（E2B）",
     sandboxIntro:
       "每个任务可以拥有独立的云端 Linux 桌面虚拟机，执行世界切换到 VM 后，你将可以实时查看桌面与接管操作。",
@@ -647,6 +647,15 @@ export const zh = {
     discardConfirm: "任务含 {dirty} 个未提交改动和 {commits} 个提交。确认永久丢弃该任务吗？",
     discardFailed: "丢弃任务失败",
     legacyTask: "这是旧版 worktree，未具备 PiWin 审核状态；请手动处理或新建受控任务。",
+    dockerCopy: "Docker 私有任务副本——尚未进入宿主 worktree。",
+    dockerChanges: "仅 Docker 内有 {n} 个文件改动。",
+    dockerNoChanges: "Docker 私有副本没有代码改动。",
+    importDocker: "导入补丁",
+    dockerImportConfirm: "确认将 Docker 内 {n} 个文件的补丁导入此任务 worktree 吗？副本随后会关闭，才能进入审核。",
+    dockerImportFailed: "导入 Docker 补丁失败",
+    discardDocker: "丢弃 Docker 副本",
+    dockerDiscardConfirm: "确认丢弃 Docker 内 {n} 个文件的改动吗？此操作不可恢复。",
+    dockerDiscardFailed: "丢弃 Docker 副本失败",
   },
   trajectory: {
     tools: "{n} 次工具",

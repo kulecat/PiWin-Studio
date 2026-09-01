@@ -141,6 +141,24 @@ and recoverable worktree-based agent tasks.
   private task checkout, and file-tool routing remains the next containment
   step.
 
+### 2026-09-01 — Docker-private task copy and reviewed patch import
+
+- Replaced the writable Docker host bind mount with a task-specific named
+  Docker volume. Writable Docker sessions can start only from a clean, active
+  PiWin-managed task worktree.
+- PiWin seeds the volume once through a read-only bootstrap mount, removes the
+  copied worktree `.git` pointer, and creates an independent Git baseline.
+  Subsequent Docker commands mount only the private volume at `/workspace`.
+- Added private-copy change preview plus explicit import/discard controls in
+  the task review chip. Import exports a binary-safe Git patch (including new
+  non-ignored files), runs `git apply --check` against the still-clean host
+  task, requires confirmation, applies it, and retires the Docker volume.
+- Review and merge now refuse an outstanding Docker copy; task discard also
+  removes its associated volume after an explicit destructive confirmation.
+- Host `write` / `edit` are blocked whenever Docker is selected, preventing
+  those tools from bypassing the private-copy hand-off. Full first-party file
+  routing remains a separate phase.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -174,9 +192,18 @@ and recoverable worktree-based agent tasks.
 - Ran a disposable Git-repository smoke test for guarded tasks: creation,
   review snapshot, rejection of post-review mutation, reviewed merge, and
   explicit cleanup all succeeded.
+- Verified `node:22-bookworm` provides Git and the non-root `node` user needed
+  for a private workspace.
+- Ran a disposable Docker + Git smoke test: private volume creation, changed
+  and newly added files (including an Agent-created private commit),
+  confirmation-gated import, host `git apply` check, volume removal, review
+  snapshot, merge, and task cleanup all succeeded.
+- Verified the stale-volume guard: an old host process cannot cause Docker to
+  auto-create an empty replacement volume after a private copy is imported or
+  discarded.
 - Final installer SHA-256:
-  `E4F8FCA910352227CF227887203F1223443876696775306DB698CDCDEC5354A9`
-  (`PiWin Studio-0.1.5-win-x64.exe`, 133,898,147 bytes).
+  `1DDBA8DA6885131F0E35DCFEB94D677C29AFEB947A50E8BD1D3674403DE04915`
+  (`PiWin Studio-0.1.6-win-x64.exe`, 133,910,613 bytes).
 
 ## Known limitations / blockers
 
@@ -189,23 +216,21 @@ and recoverable worktree-based agent tasks.
 - The packaged desktop UI has not yet had a manual end-to-end smoke test on a
   clean user profile.
 - The current local PowerShell runner is a convenience runner, not a security
-  boundary. Docker now restricts routed commands, but writable private task
-  checkouts, all file-tool routing, WSL2 containment, and path/network policy
-  controls remain pending.
+  boundary. Docker now has a private writable task hand-off, but all-file-tool
+  routing, WSL2 containment, and path/network policy controls remain pending.
 
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer.
 2. Extend the existing allow / ask / deny gate with workspace-path and network
    destination rules.
-3. Create a Docker-private checkout for each guarded task, then import a
-   validated task patch into its host review worktree.
-4. Route all first-party file operations through that same task boundary.
-5. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
+3. Route all first-party file operations through the same private task
+   boundary, so Docker's `read` / `write` / `edit` route consistently.
+4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
    experimental after all built-in tool routes are verified.
-6. Add the proxy-container allowlist and privacy-preserving network audit.
-7. Add WSL2 containment profiles and explicit host-execution confirmation.
-8. Persist isolated worktree tasks, checkpoints, merge state, and recovery
+5. Add the proxy-container allowlist and privacy-preserving network audit.
+6. Add WSL2 containment profiles and explicit host-execution confirmation.
+7. Persist isolated worktree tasks, checkpoints, merge state, and recovery
    information for multi-agent workflows.
 
 ## Working agreement

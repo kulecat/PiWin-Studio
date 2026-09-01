@@ -28,7 +28,7 @@ import {
   warmAgentShell,
   writeAgentShell,
 } from "./agent-shell";
-import { isDockerReadOnlyProfileActive, resolveLocalPtyInvocation } from "./windows-execution";
+import { isDockerHostWriteBlocked, resolveLocalPtyInvocation } from "./windows-execution";
 import { runAuditedCommand } from "./audit";
 
 export type ExecutionWorld = "local" | "vm";
@@ -330,9 +330,9 @@ const readOps: ReadOperations = {
 const writeOps: WriteOperations = {
   writeFile: async (p, content) => {
     if (world === "local") {
-      if (isDockerReadOnlyProfileActive()) {
+      if (isDockerHostWriteBlocked()) {
         throw new Error(
-          "Docker read-only profile is active. write/edit are disabled until PIWIN_DOCKER_WORKSPACE_ACCESS=readwrite is set before launching PiWin.",
+          "Docker keeps Pi write/edit operations away from the host. Use bash inside the private task copy, then import its patch from the task worktree menu.",
         );
       }
       const { writeFile } = await import("node:fs/promises");
@@ -343,9 +343,9 @@ const writeOps: WriteOperations = {
   },
   mkdir: async (dir) => {
     if (world === "local") {
-      if (isDockerReadOnlyProfileActive()) {
+      if (isDockerHostWriteBlocked()) {
         throw new Error(
-          "Docker read-only profile is active. write/edit are disabled until PIWIN_DOCKER_WORKSPACE_ACCESS=readwrite is set before launching PiWin.",
+          "Docker keeps Pi write/edit operations away from the host. Use bash inside the private task copy, then import its patch from the task worktree menu.",
         );
       }
       const { mkdir } = await import("node:fs/promises");

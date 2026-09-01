@@ -8,21 +8,37 @@
  */
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type {
+  DockerTaskPatchDiscardResult,
+  DockerTaskPatchImportResult,
+  DockerTaskPatchPreview,
+  DockerTaskWorkspaceState,
   WorktreeDiscardResult,
   WorktreeMergeResult,
   WorktreeStatusInfo,
   WorktreeTaskRef,
   WorktreeTaskState,
 } from "@shared/protocol";
+import { getDockerSandboxProfile } from "../host/windows-execution";
 
 const exec = promisify(execFile);
 const TASKS_FILE = "piwin-tasks.json";
 const TASKS_SCHEMA_VERSION = 1;
+const DOCKER_PRIVATE_VOLUME_PREFIX = "piwin-task-";
+const DOCKER_PRIVATE_BASE_REF = "refs/piwin/private-base";
+
+interface DockerTaskWorkspaceRecord {
+  volume: string;
+  state: DockerTaskWorkspaceState;
+  sourceCommit: string;
+  createdAt: string;
+  importedAt?: string;
+  discardedAt?: string;
+}
 
 interface PersistedTask {
   id: string;
@@ -39,6 +55,7 @@ interface PersistedTask {
   reviewCommit?: string;
   mergedAt?: string;
   discardedAt?: string;
+  dockerWorkspace?: DockerTaskWorkspaceRecord;
 }
 
 interface TaskStore {
@@ -66,6 +83,27 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
     maxBuffer: 16 * 1024 * 1024,
   });
   return stdout.trim();
+}
+
+function dockerExecutable(): string {
+  return process.platform === "win32" ? "docker.exe" : "docker";
+}
+
+async function docker(args: string[], options: { timeout?: number; maxBuffer?: number } = {}): Promise<string> {
+  const { stdout } = await exec(dockerExecutable(), args, {
+    timeout: options.timeout ?? 60_000,
+    maxBuffer: options.maxBuffer ?? 32 * 1024 * 1024,
+    windowsHide: true,
+  });
+  // A unified diff must retain its final newline. Do not normalize Docker
+  // command output here; callers that need a trimmed scalar can do so locally.
+  return stdout;
+}
+
+function compactCommandError(error: unknown): string {
+  const detail = error as { stderr?: string; message?: string };
+  const text = (detail.stderr || detail.message || String(error)).replace(/\s+/g, " ").trim();
+  return text.slice(0, 360);
 }
 
 function normalizePath(path: string): string {
@@ -235,12 +273,437 @@ async function updateTask(root: string, taskId: string, patch: Partial<Persisted
   return task;
 }
 
+function dockerVolumeName(task: PersistedTask): string {
+  return `${DOCKER_PRIVATE_VOLUME_PREFIX}${task.id.replaceAll("-", "").slice(0, 24)}`;
+}
+
+function dockerTaskMount(volume: string): string {
+  return ["type=volume", `src=${volume}`, "dst=/workspace"].join(",");
+}
+
+function dockerTaskIsolationArgs(): string[] {
+  const profile = getDockerSandboxProfile();
+  return [
+    "--network",
+    "none",
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,nosuid,nodev,size=512m",
+    "--tmpfs",
+    "/var/tmp:rw,nosuid,nodev,size=128m",
+    "--tmpfs",
+    "/home/node:rw,nosuid,nodev,size=256m",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges:true",
+    "--ipc",
+    "none",
+    "--pids-limit",
+    String(profile.pidsLimit),
+    "--memory",
+    profile.memory,
+    "--memory-swap",
+    profile.memory,
+    "--cpus",
+    profile.cpus,
+  ];
+}
+
+async function dockerVolumeExists(volume: string): Promise<boolean> {
+  try {
+    await docker(["volume", "inspect", volume], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function removeDockerVolume(volume: string): Promise<void> {
+  try {
+    await docker(["volume", "rm", volume], { timeout: 30_000, maxBuffer: 1024 * 1024 });
+  } catch (error) {
+    if (/no such volume/i.test(compactCommandError(error))) return;
+    throw error;
+  }
+}
+
+function assertDockerTaskSource(task: PersistedTask): Promise<void> {
+  return (async () => {
+    if (task.state !== "active") {
+      throw new Error("只有处于活动状态且尚未审核的 PiWin 任务可以启用 Docker 私有副本");
+    }
+    const [dirty, head] = await Promise.all([
+      git(task.worktreePath, "status", "--porcelain", "--untracked-files=all"),
+      git(task.worktreePath, "rev-parse", "HEAD"),
+    ]);
+    if (dirty || head !== task.baseCommit) {
+      throw new Error("Docker 私有副本只能从未修改的任务基线创建；请先审核或丢弃当前任务，再新建任务。");
+    }
+  })();
+}
+
+async function initializeDockerTaskWorkspace(task: PersistedTask, volume: string): Promise<void> {
+  const profile = getDockerSandboxProfile();
+  const sourceMount = ["type=bind", `src=${task.worktreePath}`, "dst=/source", "readonly"].join(",");
+  const bootstrap = [
+    "set -eu",
+    "cp -R /source/. /workspace/",
+    "rm -rf /workspace/.git",
+    "git -C /workspace init -q",
+    "git -C /workspace config user.name 'PiWin Studio'",
+    "git -C /workspace config user.email 'piwin@desktop.local'",
+    "git -C /workspace add -A",
+    "git -C /workspace commit --allow-empty -qm 'PiWin private task base'",
+    `git -C /workspace update-ref ${DOCKER_PRIVATE_BASE_REF} HEAD`,
+    "chown -R 1000:1000 /workspace",
+  ].join("; ");
+  await docker(
+    [
+      "run",
+      "--rm",
+      "--init",
+      ...dockerTaskIsolationArgs(),
+      // This short bootstrap needs ownership changes on a newly-created Docker
+      // volume so the unprivileged command container can write afterwards.
+      "--cap-add",
+      "CHOWN",
+      "--user",
+      "root",
+      "--mount",
+      dockerTaskMount(volume),
+      "--mount",
+      sourceMount,
+      profile.image,
+      "sh",
+      "-lc",
+      bootstrap,
+    ],
+    { timeout: 300_000 },
+  );
+}
+
+interface DockerTaskWorkspaceForChat {
+  volume: string;
+}
+
+/**
+ * Prepare the only writable Docker mount for a chat. It is a named volume,
+ * never the host task path, and starts as a Git snapshot of the task baseline.
+ */
+export async function prepareDockerTaskWorkspaceForChat(
+  worktreePath: string,
+): Promise<DockerTaskWorkspaceForChat> {
+  const root = await primaryRoot(worktreePath);
+  const branch = await git(worktreePath, "branch", "--show-current");
+  if (!branch) throw new Error("Docker 可写模式要求当前目录是已签出的 PiWin 任务分支");
+  const task = await findTask(root, worktreePath, branch);
+  if (!task) {
+    throw new Error("Docker 可写模式只允许 PiWin 受控任务 worktree；请先创建一个新任务。");
+  }
+  const existing = task.dockerWorkspace;
+  if (existing?.state === "imported" || existing?.state === "discarded") {
+    throw new Error("此任务的 Docker 私有副本已经结束。请审核它的改动并新建下一个任务。");
+  }
+  if (existing?.state === "ready" && (await dockerVolumeExists(existing.volume))) {
+    return { volume: existing.volume };
+  }
+
+  await assertDockerTaskSource(task);
+  const volume = existing?.volume ?? dockerVolumeName(task);
+  try {
+    if (!(await dockerVolumeExists(volume))) {
+      await docker([
+        "volume",
+        "create",
+        "--label",
+        "piwin.managed=true",
+        "--label",
+        `piwin.task-id=${task.id}`,
+        volume,
+      ]);
+    }
+    await initializeDockerTaskWorkspace(task, volume);
+  } catch (error) {
+    try {
+      await removeDockerVolume(volume);
+    } catch {
+      // Keep the original bootstrap failure; Docker's volume can be removed manually.
+    }
+    throw new Error(`无法创建 Docker 私有任务副本：${compactCommandError(error)}`);
+  }
+
+  await updateTask(root, task.id, {
+    dockerWorkspace: {
+      volume,
+      state: "ready",
+      sourceCommit: task.baseCommit,
+      createdAt: new Date().toISOString(),
+    },
+  });
+  return { volume };
+}
+
+interface DockerPatchData {
+  patch: string;
+  changedFiles: string[];
+}
+
+async function readDockerTaskPatch(task: PersistedTask): Promise<DockerPatchData> {
+  const workspace = task.dockerWorkspace;
+  if (!workspace || workspace.state !== "ready") return { patch: "", changedFiles: [] };
+  if (!(await dockerVolumeExists(workspace.volume))) {
+    throw new Error("Docker 私有副本已丢失；请丢弃该任务或按需手动恢复 Docker volume。");
+  }
+  const profile = getDockerSandboxProfile();
+  const prefix = [
+    "run",
+    "--rm",
+    "--init",
+    ...dockerTaskIsolationArgs(),
+    "--user",
+    "node",
+    "--workdir",
+    "/workspace",
+    "--mount",
+    dockerTaskMount(workspace.volume),
+    "--env",
+    "HOME=/tmp",
+    profile.image,
+    "sh",
+    "-lc",
+  ];
+  try {
+    // Intent-to-add makes untracked, non-ignored files part of the preview and
+    // binary patch without modifying the host task tree.
+    const names = await docker([...prefix, `git add -N -- . && git diff --name-only -z ${DOCKER_PRIVATE_BASE_REF}`], {
+      timeout: 120_000,
+    });
+    const patch = await docker(
+      [...prefix, `git add -N -- . && git diff --binary --no-ext-diff --full-index ${DOCKER_PRIVATE_BASE_REF}`],
+      { timeout: 120_000 },
+    );
+    return { patch, changedFiles: names.split("\0").filter(Boolean) };
+  } catch (error) {
+    throw new Error(`无法读取 Docker 私有副本：${compactCommandError(error)}`);
+  }
+}
+
+async function requireDockerTask(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+): Promise<{ root: string; task: PersistedTask }> {
+  const root = await primaryRoot(projectPath);
+  const task = await requireTask(root, worktreePath, branch, taskId);
+  return { root, task };
+}
+
+export async function previewDockerTaskPatch(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+): Promise<DockerTaskPatchPreview> {
+  const { task } = await requireDockerTask(projectPath, worktreePath, branch, taskId);
+  const state = task.dockerWorkspace?.state;
+  if (!state) return { state: "unavailable", changedFiles: [], patchBytes: 0 };
+  if (state !== "ready") return { state, changedFiles: [], patchBytes: 0 };
+  try {
+    const patch = await readDockerTaskPatch(task);
+    return {
+      state,
+      changedFiles: patch.changedFiles,
+      patchBytes: Buffer.byteLength(patch.patch, "utf8"),
+    };
+  } catch (error) {
+    return {
+      state,
+      changedFiles: [],
+      patchBytes: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function assertHostTaskReadyForPatch(task: PersistedTask): Promise<void> {
+  if (task.state !== "active") {
+    throw new Error("Docker 补丁只能导入尚未审核的活动任务");
+  }
+  const [dirty, head] = await Promise.all([
+    git(task.worktreePath, "status", "--porcelain", "--untracked-files=all"),
+    git(task.worktreePath, "rev-parse", "HEAD"),
+  ]);
+  if (dirty || head !== task.baseCommit) {
+    throw new Error("任务 worktree 已有宿主机改动或提交，拒绝混合导入 Docker 补丁。请先审核、提交或丢弃其中一侧的改动。");
+  }
+}
+
+export async function importDockerTaskPatch(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  confirmed: boolean,
+): Promise<DockerTaskPatchImportResult> {
+  const { root, task } = await requireDockerTask(projectPath, worktreePath, branch, taskId);
+  if (task.dockerWorkspace?.state !== "ready") {
+    return {
+      imported: false,
+      requiresConfirmation: false,
+      changedFiles: [],
+      patchBytes: 0,
+      error: "没有可导入的 Docker 私有副本",
+    };
+  }
+  let patch: DockerPatchData = { patch: "", changedFiles: [] };
+  try {
+    patch = await readDockerTaskPatch(task);
+    await assertHostTaskReadyForPatch(task);
+  } catch (error) {
+    return {
+      imported: false,
+      requiresConfirmation: false,
+      changedFiles: patch.changedFiles,
+      patchBytes: Buffer.byteLength(patch.patch, "utf8"),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const patchBytes = Buffer.byteLength(patch.patch, "utf8");
+  if (!patch.patch) {
+    return {
+      imported: false,
+      requiresConfirmation: false,
+      changedFiles: [],
+      patchBytes: 0,
+      error: "Docker 私有副本没有可导入的代码改动",
+    };
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), "piwin-docker-patch-"));
+  const patchPath = join(tempDir, "task.patch");
+  try {
+    await writeFile(patchPath, patch.patch, "utf8");
+    await git(worktreePath, "apply", "--check", "--binary", "--whitespace=nowarn", patchPath);
+    if (!confirmed) {
+      return {
+        imported: false,
+        requiresConfirmation: true,
+        changedFiles: patch.changedFiles,
+        patchBytes,
+      };
+    }
+    await git(worktreePath, "apply", "--binary", "--whitespace=nowarn", patchPath);
+    try {
+      await removeDockerVolume(task.dockerWorkspace.volume);
+    } catch (error) {
+      // The host patch already applied safely. Persist the terminal state so
+      // PiWin never presents this old copy as importable again.
+      await updateTask(root, task.id, {
+        dockerWorkspace: {
+          ...task.dockerWorkspace,
+          state: "imported",
+          importedAt: new Date().toISOString(),
+        },
+      });
+      return {
+        imported: true,
+        requiresConfirmation: false,
+        changedFiles: patch.changedFiles,
+        patchBytes,
+        error: `补丁已导入，但 Docker volume 清理失败：${compactCommandError(error)}`,
+      };
+    }
+    await updateTask(root, task.id, {
+      dockerWorkspace: {
+        ...task.dockerWorkspace,
+        state: "imported",
+        importedAt: new Date().toISOString(),
+      },
+    });
+    return { imported: true, requiresConfirmation: false, changedFiles: patch.changedFiles, patchBytes };
+  } catch (error) {
+    return {
+      imported: false,
+      requiresConfirmation: false,
+      changedFiles: patch.changedFiles,
+      patchBytes,
+      error: `Docker 补丁未导入：${compactCommandError(error)}`,
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+export async function discardDockerTaskPatch(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  confirmed: boolean,
+): Promise<DockerTaskPatchDiscardResult> {
+  const { root, task } = await requireDockerTask(projectPath, worktreePath, branch, taskId);
+  if (task.dockerWorkspace?.state !== "ready") {
+    return { discarded: false, requiresConfirmation: false, changedFiles: [], patchBytes: 0, error: "没有可丢弃的 Docker 私有副本" };
+  }
+  let patch: DockerPatchData = { patch: "", changedFiles: [] };
+  try {
+    patch = await readDockerTaskPatch(task);
+  } catch (error) {
+    return {
+      discarded: false,
+      requiresConfirmation: false,
+      changedFiles: [],
+      patchBytes: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const patchBytes = Buffer.byteLength(patch.patch, "utf8");
+  if (!confirmed && patch.changedFiles.length > 0) {
+    return { discarded: false, requiresConfirmation: true, changedFiles: patch.changedFiles, patchBytes };
+  }
+  try {
+    await removeDockerVolume(task.dockerWorkspace.volume);
+    await updateTask(root, task.id, {
+      dockerWorkspace: {
+        ...task.dockerWorkspace,
+        state: "discarded",
+        discardedAt: new Date().toISOString(),
+      },
+    });
+    return { discarded: true, requiresConfirmation: false, changedFiles: patch.changedFiles, patchBytes };
+  } catch (error) {
+    return {
+      discarded: false,
+      requiresConfirmation: false,
+      changedFiles: patch.changedFiles,
+      patchBytes,
+      error: `Docker 私有副本未丢弃：${compactCommandError(error)}`,
+    };
+  }
+}
+
 export async function isGitRepo(path: string): Promise<boolean> {
   try {
     await git(path, "rev-parse", "--git-dir");
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Resolve persisted PiWin task identity when a saved session is reopened. */
+export async function findManagedTaskForWorktreePath(worktreePath: string): Promise<WorktreeTaskRef | undefined> {
+  try {
+    const root = await primaryRoot(worktreePath);
+    const branch = await git(worktreePath, "branch", "--show-current");
+    if (!branch) return undefined;
+    const task = await findTask(root, worktreePath, branch);
+    return task ? toTaskRef(task) : undefined;
+  } catch {
+    // Ordinary folders and legacy sessions do not have PiWin task metadata.
+    return undefined;
   }
 }
 
@@ -440,6 +903,9 @@ export async function prepareWorktreeReview(
   if (task.state === "merged" || task.state === "discarded") {
     throw new Error("已完成的任务不能再次进入审核");
   }
+  if (task.dockerWorkspace?.state === "ready") {
+    throw new Error("Docker 私有副本仍在保留改动。请先导入补丁或显式丢弃该副本，再准备审核。");
+  }
   await commitTaskSnapshot(worktreePath, branch, task.id);
   const reviewCommit = await git(worktreePath, "rev-parse", "HEAD");
   await updateTask(root, task.id, {
@@ -466,6 +932,9 @@ export async function mergeWorktree(
   const mainBranch = (await git(root, "branch", "--show-current")) || "HEAD";
   if (task.state !== "review_ready") {
     return { merged: false, mainBranch, mergedCommits: 0, error: "请先将任务标记为“准备审核”" };
+  }
+  if (task.dockerWorkspace?.state === "ready") {
+    return { merged: false, mainBranch, mergedCommits: 0, error: "Docker 私有副本尚未导入或丢弃，拒绝合并。" };
   }
   if (mainBranch !== task.targetBranch) {
     return { merged: false, mainBranch, mergedCommits: 0, error: `主工作区当前为 ${mainBranch}，任务目标为 ${task.targetBranch}` };
@@ -530,7 +999,17 @@ export async function discardTask(
   const root = await primaryRoot(projectPath);
   const task = await requireTask(root, worktreePath, branch, taskId);
   const status = await worktreeStatus(root, worktreePath, branch, task.id);
-  const hasChanges = status.dirtyFiles > 0 || status.ahead > 0;
+  let privateChanges = false;
+  if (task.dockerWorkspace?.state === "ready") {
+    try {
+      privateChanges = (await readDockerTaskPatch(task)).changedFiles.length > 0;
+    } catch {
+      // If the private copy cannot be inspected, err on the side of asking for
+      // an explicit destructive decision before removing the task and volume.
+      privateChanges = true;
+    }
+  }
+  const hasChanges = status.dirtyFiles > 0 || status.ahead > 0 || privateChanges;
   if (!confirmed && task.state !== "merged" && hasChanges) {
     return {
       discarded: false,
@@ -540,9 +1019,19 @@ export async function discardTask(
     };
   }
   try {
+    const now = new Date().toISOString();
+    let dockerWorkspace = task.dockerWorkspace;
+    if (dockerWorkspace && dockerWorkspace.state !== "discarded") {
+      await removeDockerVolume(dockerWorkspace.volume);
+      dockerWorkspace = {
+        ...dockerWorkspace,
+        state: "discarded",
+        discardedAt: now,
+      };
+    }
     await git(root, "worktree", "remove", "--force", task.worktreePath);
     await git(root, "branch", "-D", task.branch);
-    await updateTask(root, task.id, { state: "discarded", discardedAt: new Date().toISOString() });
+    await updateTask(root, task.id, { state: "discarded", discardedAt: now, dockerWorkspace });
     return {
       discarded: true,
       requiresConfirmation: false,

@@ -25,7 +25,13 @@ interface ChatProcess {
 
 const chats = new Map<string, ChatProcess>();
 
-function forkHost(chatId: string, cwd: string, servicePrefix: string, label?: string): UtilityProcess {
+function forkHost(
+  chatId: string,
+  cwd: string,
+  servicePrefix: string,
+  label?: string,
+  dockerWorkspaceVolume?: string,
+): UtilityProcess {
   const hostPath = join(import.meta.dirname, "host.js");
   const serviceName = `${servicePrefix}-${chatId.slice(0, 8)}`;
   const proc = utilityProcess.fork(hostPath, [], {
@@ -37,6 +43,7 @@ function forkHost(chatId: string, cwd: string, servicePrefix: string, label?: st
       ...(getConfig().tavilyApiKey ? { TAVILY_API_KEY: getConfig().tavilyApiKey } : {}),
       ...(getConfig().vercelToken ? { VERCEL_TOKEN: getConfig().vercelToken } : {}),
       ...(getConfig().vercelTeamId ? { VERCEL_TEAM_ID: getConfig().vercelTeamId } : {}),
+      ...(dockerWorkspaceVolume ? { PIWIN_DOCKER_WORKSPACE_VOLUME: dockerWorkspaceVolume } : {}),
     },
   });
   trackAgentProcess(proc, {
@@ -49,9 +56,13 @@ function forkHost(chatId: string, cwd: string, servicePrefix: string, label?: st
   return proc;
 }
 
-export function createChat(webContents: WebContents, options: ChatCreateOptions): string {
+export function createChat(
+  webContents: WebContents,
+  options: ChatCreateOptions,
+  execution?: { dockerWorkspaceVolume?: string },
+): string {
   const chatId = randomUUID();
-  const proc = forkHost(chatId, options.cwd, "pi-chat");
+  const proc = forkHost(chatId, options.cwd, "pi-chat", undefined, execution?.dockerWorkspaceVolume);
 
   const entry: ChatProcess = { chatId, proc, webContents };
   chats.set(chatId, entry);

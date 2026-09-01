@@ -43,6 +43,9 @@ import type {
   VercelTestResult,
   ApiKeyTestResult,
   CustomProviderDraft,
+  DockerTaskPatchDiscardResult,
+  DockerTaskPatchImportResult,
+  DockerTaskPatchPreview,
   SandboxStatusPayload,
   UpdateCheckPayload,
 } from "@shared/protocol";
@@ -282,6 +285,29 @@ const api = {
       confirmed: boolean,
     ): Promise<WorktreeDiscardResult> =>
       ipcRenderer.invoke(IPC.worktreeDiscard, path, wt, branch, taskId, confirmed),
+    dockerPatch: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+    ): Promise<DockerTaskPatchPreview> =>
+      ipcRenderer.invoke(IPC.worktreeDockerPatch, path, wt, branch, taskId),
+    importDockerPatch: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      confirmed: boolean,
+    ): Promise<DockerTaskPatchImportResult> =>
+      ipcRenderer.invoke(IPC.worktreeDockerImport, path, wt, branch, taskId, confirmed),
+    discardDockerPatch: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      confirmed: boolean,
+    ): Promise<DockerTaskPatchDiscardResult> =>
+      ipcRenderer.invoke(IPC.worktreeDockerDiscard, path, wt, branch, taskId, confirmed),
     remove: (path: string, worktreePath: string, branch?: string): Promise<void> =>
       ipcRenderer.invoke(IPC.removeWorktree, path, worktreePath, branch),
   },

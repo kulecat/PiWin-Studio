@@ -37,7 +37,7 @@
 
 **PiWin Studio** 是基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的桌面工作台。它保留 Bivor 的 Electron/Pi SDK 基础，并新增 Windows 打包、PowerShell 执行兼容、Docker 受限命令执行和审计层。
 
-Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网和资源限制的显式 Docker 命令 profile。WSL2 隔离、全部文件工具路由和可恢复多 Agent 工作流见 [docs/windows-port.md](docs/windows-port.md)。
+Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制和私有任务副本补丁导入的显式 Docker 命令 profile。WSL2 隔离、全部文件工具路由和可恢复多 Agent 工作流见 [docs/windows-port.md](docs/windows-port.md)。
 
 每个会话都在独立的 Electron utility process 中运行 pi SDK（`AgentSessionRuntime`）。会话、认证、技能、提示模板、MCP 配置与 pi CLI 完全互通（`~/.pi/agent/`），终端与桌面端可以随时切换。
 
@@ -47,6 +47,7 @@ Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命�
 
 - **多任务并行** — 每个会话运行在独立 utility process 中,崩溃隔离、可独立中止
 - **受控 Git worktree 任务** — 主工作区干净时才创建 `piwin/task/*` 任务分支；先冻结审核快照，再由人工确认合并，主分支变化或审核后再修改都会被拒绝
+- **Docker 可写私有任务** — Docker 命令只写入任务专属 volume；PiWin 预览、校验并在人工确认后将补丁导入受控 worktree，之后才能审核
 - **会话树与分叉** — 可视化历史树,任意消息处分叉(同文件保留全部历史,随时切回);任意用户消息「编辑并分叉」;被放弃分支的经验可由 LLM 总结后带入新分支
 - **流式对话** — 思考过程折叠展示、Markdown 流式渲染 + shiki 双主题代码高亮、光标动画
 - **工具调用可视化** — bash 输出流、read/grep/ls 结果、edit 内联 diff、write 文件预览,含运行中/成功/失败状态与分类配色
@@ -85,7 +86,7 @@ Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命�
 - **执行世界** — 内置 bash/read/write/edit 可在本地或云端 VM 中执行(`set_execution_world`)
 - **云端 VM 沙箱(E2B)** — 完整桌面 VM,实时画面流、`vm_gui` 鼠标键盘控制、`vm_file` 文件传输、`vm_screenshot`
 - **本地沙箱** — macOS seatbelt 配置:`off` / `workspace` / `strict`
-- **受限 Docker 命令（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制，以及 `readonly` 工作区模式
+- **受限 Docker 命令（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制，以及 `readonly` 查看模式和私有 volume 可写任务模式
 - **子 agent** — `subagent_run` 最多并行 4 个(可只读或绑定 VM),Dock 实时监控
 - **浏览器** — puppeteer-core 驱动有头 Chrome/Edge,持久化用户配置
 - **Web** — Tavily 驱动的 `web_search` + 免 key 的 `web_fetch`(网页转 markdown)

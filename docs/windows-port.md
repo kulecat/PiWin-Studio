@@ -19,9 +19,10 @@ execution on Windows:
   the POSIX shell semantics expected by Pi tools; otherwise it uses PowerShell.
 - Set `PIWIN_EXECUTION_RUNNER=powershell`, `wsl`, or `docker` to choose a
   runner explicitly.
-- Docker is never selected automatically. It runs the command with the active
-  worktree mounted at `/workspace`; configure its image with
-  `PIWIN_DOCKER_IMAGE`.
+- Docker is never selected automatically. In its default read-only profile it
+  mounts the active worktree at `/workspace`; writable mode instead requires a
+  fresh PiWin-managed task worktree and uses a private Docker volume. Configure
+  its image with `PIWIN_DOCKER_IMAGE`.
 - The **Settings → Local execution environment** page probes the live
   PowerShell version, installed WSL distribution, and Docker daemon before it
   displays the effective runner. An explicitly selected unavailable runner is
@@ -35,7 +36,10 @@ conservative:
 
 - the container root filesystem is read-only; `/tmp`, `/var/tmp`, and the
   `node` home directory are disposable tmpfs mounts;
-- the only host mount is the active workspace at `/workspace`;
+- in `readonly` mode, the only host mount is the active workspace at
+  `/workspace`, mounted read-only;
+- in `readwrite` mode, there is no writable host mount: commands receive only
+  a task-specific Docker volume at `/workspace`;
 - network access is disabled by default;
 - all Linux capabilities are dropped, privilege escalation is disabled, and
   the IPC namespace is isolated;
@@ -45,7 +49,7 @@ Set these environment variables before launching PiWin Studio:
 
 ```powershell
 $env:PIWIN_EXECUTION_RUNNER = "docker"
-$env:PIWIN_DOCKER_WORKSPACE_ACCESS = "readonly" # default; set readwrite only when needed
+$env:PIWIN_DOCKER_WORKSPACE_ACCESS = "readonly" # default; readwrite needs a fresh PiWin task
 $env:PIWIN_DOCKER_NETWORK = "none"              # set allow only when needed
 $env:PIWIN_DOCKER_MEMORY = "2g"
 $env:PIWIN_DOCKER_CPUS = "2"
@@ -53,14 +57,17 @@ $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
 ```
 
 `readonly` is the default: it mounts the workspace read-only and makes PiWin's
-`write` / `edit` tools reject changes. Set `readwrite` only for a task that
-needs to edit its selected workspace. It is not rollback protection by itself:
-use the guarded Git task flow below for that boundary.
+`write` / `edit` tools reject changes. `readwrite` starts a private Docker copy
+for a fresh guarded task; it never grants a container a writable host mount.
+The default image is `node:22-bookworm` because this workflow needs Git. A
+custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, and a non-root `node`
+user (UID 1000).
 
 This is a **command-execution** boundary, not a claim that all Agent behavior
 is isolated. PiWin's host process still loads trusted Pi extensions and serves
-some file operations. A later phase will route all file operations through the
-same boundary and pair Docker with a private task checkout.
+some file operations. Host `write` / `edit` are deliberately blocked whenever
+Docker is selected; a later phase will route all first-party file operations
+through the same private task boundary.
 
 ## Guarded Git task worktrees
 
@@ -81,9 +88,34 @@ The lifecycle is deliberately explicit:
 4. **Discard** — deleting a task containing changes requires a separate explicit
    confirmation. The task branch and its worktree are then removed together.
 
-This phase establishes the human review boundary. It does **not** yet give a
-Docker container a writable task checkout, and it does not make arbitrary
-extensions or MCP tools sandboxed.
+### Docker-private writable task workflow
+
+When `PIWIN_EXECUTION_RUNNER=docker` and
+`PIWIN_DOCKER_WORKSPACE_ACCESS=readwrite` are selected, opening a fresh guarded
+task creates a named Docker volume. PiWin seeds it once from the task worktree
+through a read-only bootstrap mount, removes the copied `.git` pointer, and
+creates an independent Git baseline inside the volume. Every later command
+mounts only that volume at `/workspace`; it has no host task directory mount.
+
+The task chip reports Docker-only changes and offers two explicit actions:
+
+1. **Import patch** — PiWin extracts a binary-safe Git patch (including new,
+   non-ignored files), checks it against the still-clean host task with
+   `git apply --check`, asks for confirmation, applies it, and removes the
+   private volume.
+2. **Discard Docker copy** — deletes the private volume. A changed copy needs
+   its own confirmation.
+
+PiWin refuses to prepare review or merge while a private copy remains. It also
+refuses to create a private copy from a dirty or already-committed task, and
+refuses to mix an imported patch with host-side task changes. This makes the
+patch import the explicit hand-off between execution and human review. An old
+chat process cannot recreate a removed volume: it is stopped at the next Docker
+command, so after import the user should prepare review and then create a new
+task for additional work.
+
+This does not make arbitrary extensions, MCP tools, or host-side `read` tools
+sandboxed. Those routes remain the next containment phase.
 
 ## Execution audit log
 
@@ -110,6 +142,6 @@ with the recovery layer.
 
 The Docker restricted command profile is the first Windows containment layer.
 Native PowerShell and WSL2 are convenience runners and must always be visibly
-marked as host execution in the UI and audit log. Docker task-private
-checkouts, network allowlists, credential isolation, and all-file-tool routing
-remain planned.
+marked as host execution in the UI and audit log. Docker task-private copies
+now provide the writable-command boundary; network allowlists, credential
+isolation, and all-file-tool routing remain planned.

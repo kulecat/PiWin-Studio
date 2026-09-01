@@ -5,8 +5,9 @@
  * different execution environments. Keep the choice in one small module so
  * policy and audit layers can reason about the same runner identity later.
  *
- * Docker is deliberately opt-in: selecting it mounts a workspace into a
- * container, so it must never become the automatic fallback.
+ * Docker is deliberately opt-in. Its read-only mode mounts a workspace for
+ * inspection; its writable mode uses a PiWin-created private task volume, so
+ * it must never become the automatic fallback.
  */
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -30,11 +31,15 @@ export interface PtyInvocation {
 const RUNNER_ENV = "PIWIN_EXECUTION_RUNNER";
 const DOCKER_IMAGE_ENV = "PIWIN_DOCKER_IMAGE";
 const DOCKER_WORKSPACE_ACCESS_ENV = "PIWIN_DOCKER_WORKSPACE_ACCESS";
+const DOCKER_WORKSPACE_VOLUME_ENV = "PIWIN_DOCKER_WORKSPACE_VOLUME";
 const DOCKER_NETWORK_ENV = "PIWIN_DOCKER_NETWORK";
 const DOCKER_MEMORY_ENV = "PIWIN_DOCKER_MEMORY";
 const DOCKER_CPUS_ENV = "PIWIN_DOCKER_CPUS";
 const DOCKER_PIDS_LIMIT_ENV = "PIWIN_DOCKER_PIDS_LIMIT";
-const DEFAULT_DOCKER_IMAGE = "node:22-bookworm-slim";
+// The private task workspace is a small Git repository. The full Bookworm
+// image includes Git, unlike the slim image that was sufficient for the
+// original command-only profile.
+const DEFAULT_DOCKER_IMAGE = "node:22-bookworm";
 const DEFAULT_DOCKER_MEMORY = "2g";
 const DEFAULT_DOCKER_CPUS = "2";
 const DEFAULT_DOCKER_PIDS_LIMIT = 128;
@@ -103,6 +108,46 @@ export function getDockerSandboxProfile(): DockerSandboxProfile {
 /** A Docker read-only profile also disables host-side Pi write/edit tools. */
 export function isDockerReadOnlyProfileActive(): boolean {
   return process.platform === "win32" && configuredRunner() === "docker" && getDockerSandboxProfile().workspaceAccess === "readonly";
+}
+
+/** True only for the write-capable profile that must use a private task volume. */
+export function isDockerPrivateCopyModeActive(): boolean {
+  return process.platform === "win32" && configuredRunner() === "docker" && getDockerSandboxProfile().workspaceAccess === "readwrite";
+}
+
+/** Pi file tools must not write the host whenever Docker is the selected runner. */
+export function isDockerHostWriteBlocked(): boolean {
+  return process.platform === "win32" && configuredRunner() === "docker";
+}
+
+function privateWorkspaceVolume(): string | undefined {
+  const value = process.env[DOCKER_WORKSPACE_VOLUME_ENV]?.trim();
+  return value && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value) ? value : undefined;
+}
+
+/**
+ * Docker silently creates a missing named volume when `docker run --mount` is
+ * used. Check first so an imported/discarded task cannot accidentally resume
+ * in an empty replacement volume from an old host process.
+ */
+function requirePrivateWorkspaceVolume(): string {
+  const volume = privateWorkspaceVolume();
+  if (!volume) {
+    throw new Error(
+      "Docker writable mode requires a PiWin guarded task worktree. Open a new task worktree, then start the agent there.",
+    );
+  }
+  const checked = spawnSync("docker.exe", ["volume", "inspect", volume], {
+    encoding: "utf8",
+    timeout: 2_500,
+    windowsHide: true,
+  });
+  if (checked.status !== 0) {
+    throw new Error(
+      "This Docker private task copy has already been imported or discarded. Prepare review, then create a new task before running more Docker commands.",
+    );
+  }
+  return volume;
 }
 
 function probeWsl(): WslProbe {
@@ -188,7 +233,10 @@ function checkDocker(): ExecutionRunnerStatus {
   const version = result.stdout?.trim();
   if (result.status === 0 && version) {
     const profile = getDockerSandboxProfile();
-    const workspace = profile.workspaceAccess === "readonly" ? "read-only workspace" : "workspace writes allowed";
+    const workspace =
+      profile.workspaceAccess === "readonly"
+        ? "read-only workspace"
+        : "private writable task copy";
     const network = profile.network === "none" ? "network disabled" : "network explicitly allowed";
     return {
       kind: "docker",
@@ -227,8 +275,13 @@ function wslInvocation(command: string, cwd: string): PtyInvocation {
 
 function dockerInvocation(command: string, cwd: string): PtyInvocation {
   const profile = getDockerSandboxProfile();
-  const workspaceMount = ["type=bind", `src=${cwd}`, "dst=/workspace"];
-  if (profile.workspaceAccess === "readonly") workspaceMount.push("readonly");
+  const workspaceMount =
+    profile.workspaceAccess === "readonly"
+      ? ["type=bind", `src=${cwd}`, "dst=/workspace", "readonly"]
+      : (() => {
+          const volume = requirePrivateWorkspaceVolume();
+          return ["type=volume", `src=${volume}`, "dst=/workspace"];
+        })();
   return {
     file: "docker.exe",
     args: [

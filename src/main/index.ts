@@ -6,7 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { ChatCreateOptions, CustomProviderDraft, HostCommand, ScheduledTask } from "@shared/protocol";
 import { IPC } from "@shared/protocol";
 import { TITLEBAR_HEIGHT } from "@shared/titlebar";
-import { inspectExecutionEnvironment } from "../host/windows-execution";
+import { inspectExecutionEnvironment, isDockerPrivateCopyModeActive } from "../host/windows-execution";
 import { createChat, disposeAllChats, disposeChat, sendChatCommand } from "./chats";
 import { getAppVersions, getMonitorSnapshot, killAgentProcess } from "./agent-monitor";
 import { checkForUpdates } from "./updates";
@@ -98,12 +98,17 @@ import {
 } from "./files";
 import {
   createWorktree,
+  discardDockerTaskPatch,
   discardTask,
+  findManagedTaskForWorktreePath,
+  importDockerTaskPatch,
   isGitRepo,
   listBranches,
   listWorktrees,
   mergeWorktree,
+  prepareDockerTaskWorkspaceForChat,
   prepareWorktreeReview,
+  previewDockerTaskPatch,
   removeWorktree,
   worktreeStatus,
 } from "./worktrees";
@@ -224,9 +229,15 @@ function createWindow(): BrowserWindow {
 function registerIpc(): void {
   registerEditorIpc();
   registerFileWatchIpc();
-  ipcMain.handle(IPC.chatCreate, (event, options: ChatCreateOptions) => {
-    const chatId = createChat(event.sender, options);
-    return { chatId };
+  ipcMain.handle(IPC.chatCreate, async (event, options: ChatCreateOptions) => {
+    const managedTask = await findManagedTaskForWorktreePath(options.cwd);
+    const dockerTask = isDockerPrivateCopyModeActive()
+      ? await prepareDockerTaskWorkspaceForChat(options.cwd)
+      : undefined;
+    const chatId = createChat(event.sender, options, {
+      dockerWorkspaceVolume: dockerTask?.volume,
+    });
+    return { chatId, worktree: managedTask };
   });
 
   ipcMain.on(IPC.chatCommand, (_event, chatId: string, command: HostCommand) => {
@@ -405,6 +416,21 @@ function registerIpc(): void {
     IPC.worktreeDiscard,
     (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
       discardTask(path, wt, branch, taskId, confirmed),
+  );
+  ipcMain.handle(
+    IPC.worktreeDockerPatch,
+    (_e, path: string, wt: string, branch: string, taskId: string) =>
+      previewDockerTaskPatch(path, wt, branch, taskId),
+  );
+  ipcMain.handle(
+    IPC.worktreeDockerImport,
+    (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
+      importDockerTaskPatch(path, wt, branch, taskId, confirmed),
+  );
+  ipcMain.handle(
+    IPC.worktreeDockerDiscard,
+    (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
+      discardDockerTaskPatch(path, wt, branch, taskId, confirmed),
   );
   ipcMain.handle(IPC.deploymentsConfigured, () => deploymentsConfigured());
   ipcMain.handle(IPC.deploymentsProjects, () => listVercelProjects());

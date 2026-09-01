@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, GitBranch, GitMerge, Loader2, ShieldCheck, Trash2 } from "lucide-react";
-import type { WorktreeMergeResult, WorktreeStatusInfo } from "@shared/protocol";
+import { Check, Download, GitBranch, GitMerge, Loader2, ShieldCheck, Trash2 } from "lucide-react";
+import type { DockerTaskPatchPreview, WorktreeMergeResult, WorktreeStatusInfo } from "@shared/protocol";
 import { useAppStore, type ChatState } from "@/stores/app-store";
 import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
@@ -14,23 +14,32 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
   const closeChat = useAppStore((s) => s.closeChat);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<WorktreeStatusInfo | null>(null);
+  const [dockerPatch, setDockerPatch] = useState<DockerTaskPatchPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [merging, setMerging] = useState(false);
   const [result, setResult] = useState<WorktreeMergeResult | null>(null);
   const [cleaning, setCleaning] = useState(false);
+  const [dockerBusy, setDockerBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const wt = chat.worktree;
 
   const refresh = (): void => {
     if (!wt) return;
     setStatus(null);
+    setDockerPatch(null);
     setError(null);
     setResult(null);
     window.pi.worktrees
       .status(wt.projectPath, chat.cwd, wt.branch, wt.taskId)
       .then(setStatus)
       .catch((e: Error) => setError(e.message));
+    if (wt.taskId) {
+      window.pi.worktrees
+        .dockerPatch(wt.projectPath, chat.cwd, wt.branch, wt.taskId)
+        .then(setDockerPatch)
+        .catch((e: Error) => setError(e.message));
+    }
   };
 
   useEffect(() => {
@@ -114,12 +123,85 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
     }
   };
 
+  const doImportDockerPatch = async (): Promise<void> => {
+    if (!wt.taskId) return;
+    setDockerBusy(true);
+    setError(null);
+    try {
+      let next = await window.pi.worktrees.importDockerPatch(
+        wt.projectPath,
+        chat.cwd,
+        wt.branch,
+        wt.taskId,
+        false,
+      );
+      if (next.requiresConfirmation) {
+        const confirmed = window.confirm(t("worktree.dockerImportConfirm", { n: next.changedFiles.length }));
+        if (!confirmed) return;
+        next = await window.pi.worktrees.importDockerPatch(
+          wt.projectPath,
+          chat.cwd,
+          wt.branch,
+          wt.taskId,
+          true,
+        );
+      }
+      if (!next.imported) {
+        setError(next.error ?? t("worktree.dockerImportFailed"));
+        return;
+      }
+      setDockerPatch({ state: "imported", changedFiles: [], patchBytes: 0, error: next.error });
+      setStatus(await window.pi.worktrees.status(wt.projectPath, chat.cwd, wt.branch, wt.taskId));
+      if (next.error) setError(next.error);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDockerBusy(false);
+    }
+  };
+
+  const doDiscardDockerPatch = async (): Promise<void> => {
+    if (!wt.taskId) return;
+    setDockerBusy(true);
+    setError(null);
+    try {
+      let next = await window.pi.worktrees.discardDockerPatch(
+        wt.projectPath,
+        chat.cwd,
+        wt.branch,
+        wt.taskId,
+        false,
+      );
+      if (next.requiresConfirmation) {
+        const confirmed = window.confirm(t("worktree.dockerDiscardConfirm", { n: next.changedFiles.length }));
+        if (!confirmed) return;
+        next = await window.pi.worktrees.discardDockerPatch(
+          wt.projectPath,
+          chat.cwd,
+          wt.branch,
+          wt.taskId,
+          true,
+        );
+      }
+      if (!next.discarded) {
+        setError(next.error ?? t("worktree.dockerDiscardFailed"));
+        return;
+      }
+      setDockerPatch({ state: "discarded", changedFiles: [], patchBytes: 0 });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDockerBusy(false);
+    }
+  };
+
   const task = status?.task;
   const pending = status ? status.ahead + (status.dirtyFiles > 0 ? 1 : 0) : 0;
   const changedAfterReview = task?.taskChangedAfterReview ?? false;
   const targetMoved = task?.targetAdvanced || task?.targetBranchChanged;
   const reviewReady = task?.state === "review_ready" && !changedAfterReview;
   const canMerge = reviewReady && !targetMoved && !chat.isStreaming;
+  const dockerCopyReady = dockerPatch?.state === "ready";
 
   return (
     <div ref={ref} className="relative inline-flex shrink-0 translate-y-0.5">
@@ -172,6 +254,46 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
                 </div>
               )}
 
+              {dockerCopyReady && (
+                <div className="mb-2 rounded-lg border border-border bg-bg px-2 py-1.5 text-[10.5px] leading-relaxed text-fg-muted">
+                  <div className="flex items-center gap-1 text-fg-secondary">
+                    <ShieldCheck size={11} className="text-accent" />
+                    {t("worktree.dockerCopy")}
+                  </div>
+                  {dockerPatch.error ? (
+                    <div className="pt-1 text-danger">{dockerPatch.error}</div>
+                  ) : dockerPatch.changedFiles.length > 0 ? (
+                    <div className="pt-1">{t("worktree.dockerChanges", { n: dockerPatch.changedFiles.length })}</div>
+                  ) : (
+                    <div className="pt-1">{t("worktree.dockerNoChanges")}</div>
+                  )}
+                  <div className="mt-1.5 flex gap-1.5">
+                    {dockerPatch.changedFiles.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={dockerBusy || chat.isStreaming || Boolean(dockerPatch.error)}
+                        onClick={() => void doImportDockerPatch()}
+                        title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-md bg-accent px-2 py-1.5 text-[10.5px] font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-40"
+                      >
+                        {dockerBusy ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                        {t("worktree.importDocker")}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={dockerBusy || chat.isStreaming}
+                      onClick={() => void doDiscardDockerPatch()}
+                      title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-[10.5px] text-fg-secondary hover:border-danger/40 hover:text-danger disabled:opacity-40"
+                    >
+                      <Trash2 size={11} />
+                      {t("worktree.discardDocker")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {status.changedFiles.length > 0 && (
                 <div className="mb-2 max-h-28 overflow-y-auto rounded-lg border border-border bg-bg px-2 py-1.5">
                   {status.changedFiles.slice(0, 12).map((file) => (
@@ -200,7 +322,7 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
                   {merging ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />}
                   {t("worktree.mergeTo", { branch: status.mainBranch })}
                 </button>
-              ) : task ? (
+              ) : task && !dockerCopyReady ? (
                 <button
                   type="button"
                   disabled={reviewing || chat.isStreaming}
@@ -211,9 +333,9 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
                   {reviewing ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                   {t("worktree.prepareReview")}
                 </button>
-              ) : (
+              ) : !task ? (
                 <div className="py-1 text-[11.5px] text-warning">{t("worktree.legacyTask")}</div>
-              )}
+              ) : null}
             </>
           )}
 

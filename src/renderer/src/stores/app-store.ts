@@ -1244,12 +1244,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         : {}),
     });
     if (sessionFile) openingSessions.set(sessionFile, createPromise.then(() => undefined));
-    let chatId: string;
+    let created: { chatId: string; worktree?: { branch: string; projectPath: string; taskId: string; baseCommit: string } };
     try {
-      ({ chatId } = await createPromise);
+      created = await createPromise;
     } finally {
       if (sessionFile) openingSessions.delete(sessionFile);
     }
+    const { chatId } = created;
+    const resolvedWorktree =
+      worktree ??
+      (created.worktree
+        ? {
+            branch: created.worktree.branch,
+            projectPath: created.worktree.projectPath,
+            taskId: created.worktree.taskId,
+            baseCommit: created.worktree.baseCommit,
+          }
+        : undefined);
     const chat: ChatState = {
       chatId,
       cwd,
@@ -1266,7 +1277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingPrompt: initialPrompt,
       treeOpen: false,
       filesOpen: false,
-      worktree,
+      worktree: resolvedWorktree,
       bashRunning: false,
       bashOutput: "",
       checkpoints: {},

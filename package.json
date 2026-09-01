@@ -1,7 +1,7 @@
 {
   "name": "piwin-studio",
   "productName": "PiWin Studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "PiWin Studio — a Windows and WSL2 workbench for Pi coding agents, derived from Bivor",
   "main": "out/main/index.js",
   "type": "module",

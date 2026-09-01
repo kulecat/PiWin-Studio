@@ -91,7 +91,7 @@ export interface ExecutionRunnerStatus {
 /** Effective restrictions applied to commands routed through Docker on Windows. */
 export interface DockerSandboxProfile {
   image: string;
-  /** readonly rejects write/edit tools and mounts the workspace read-only. */
+  /** readonly mounts the host workspace read-only; readwrite uses a private Docker task copy. */
   workspaceAccess: "readonly" | "readwrite";
   /** none is the safe default; allow must be selected explicitly. */
   network: "none" | "allow";
@@ -734,6 +734,35 @@ export interface WorktreeDiscardResult {
   error?: string;
 }
 
+/** State of the disposable Docker copy associated with one guarded task. */
+export type DockerTaskWorkspaceState = "ready" | "imported" | "discarded";
+
+/** A non-mutating summary of changes held only inside a Docker task copy. */
+export interface DockerTaskPatchPreview {
+  state: DockerTaskWorkspaceState | "unavailable";
+  changedFiles: string[];
+  patchBytes: number;
+  error?: string;
+}
+
+/** Result of the explicit, human-confirmed Docker patch import operation. */
+export interface DockerTaskPatchImportResult {
+  imported: boolean;
+  requiresConfirmation: boolean;
+  changedFiles: string[];
+  patchBytes: number;
+  error?: string;
+}
+
+/** Result of discarding the unimported private Docker task copy. */
+export interface DockerTaskPatchDiscardResult {
+  discarded: boolean;
+  requiresConfirmation: boolean;
+  changedFiles: string[];
+  patchBytes: number;
+  error?: string;
+}
+
 export interface CheckpointFileDiff {
   path: string;
   additions: number;
@@ -976,6 +1005,9 @@ export const IPC = {
   worktreeReview: "worktree:review",
   worktreeMerge: "worktree:merge",
   worktreeDiscard: "worktree:discard",
+  worktreeDockerPatch: "worktree:dockerPatch",
+  worktreeDockerImport: "worktree:dockerImport",
+  worktreeDockerDiscard: "worktree:dockerDiscard",
   authStartLogin: "auth:startLogin",
   authPromptResponse: "auth:promptResponse",
   authCancelLogin: "auth:cancelLogin",
@@ -1076,4 +1108,6 @@ export interface ChatCreateOptions {
 
 export interface ChatCreateResult {
   chatId: string;
+  /** Restored from local task metadata when this chat belongs to a guarded worktree. */
+  worktree?: WorktreeTaskRef;
 }

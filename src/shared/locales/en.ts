@@ -132,19 +132,19 @@ export const en: Messages = {
     executionReady: "Ready",
     executionUnavailable: "Unavailable",
     executionHint:
-      "Set PIWIN_EXECUTION_RUNNER to auto, powershell, wsl, or docker before launching PiWin Studio. Docker is never selected automatically because it mounts the active workspace.",
+      "Set PIWIN_EXECUTION_RUNNER to auto, powershell, wsl, or docker before launching PiWin Studio. Docker is never selected automatically because writable mode requires a guarded task copy.",
     dockerSandboxTitle: "Restricted Docker profile",
     dockerSandboxSummary: "Workspace: {workspace} · Network: {network} · {memory} memory · {cpus} CPU · {pids} PIDs",
     dockerWorkspaceReadonly: "Read-only (write / edit disabled)",
-    dockerWorkspaceReadwrite: "Writable (mounted workspace only)",
+    dockerWorkspaceReadwrite: "Writable private task copy",
     dockerNetworkNone: "Disabled (default)",
     dockerNetworkAllow: "Explicitly allowed",
     dockerSandboxControls:
       "The container root filesystem is read-only, Linux capabilities are dropped, privilege escalation and IPC sharing are disabled, and writable paths are temporary.",
     dockerSandboxScope:
-      "This phase isolates commands routed to Docker only. Custom extensions still run in the PiWin host process; use a Git worktree to isolate code changes from the main branch.",
+      "Writable Docker commands use a private task volume, then a reviewed patch import. Host write/edit and custom extensions are not yet container-routed.",
     dockerSandboxConfig:
-      "Set before launch: PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite (readonly is default), PIWIN_DOCKER_NETWORK=none|allow. PIWIN_DOCKER_MEMORY, PIWIN_DOCKER_CPUS, and PIWIN_DOCKER_PIDS_LIMIT adjust limits.",
+      "Set before launch: PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite (readonly is default), PIWIN_DOCKER_NETWORK=none|allow. Writable mode needs a fresh PiWin task worktree. PIWIN_DOCKER_MEMORY, PIWIN_DOCKER_CPUS, and PIWIN_DOCKER_PIDS_LIMIT adjust limits.",
     sandboxTitle: "Cloud VM (E2B)",
     sandboxIntro:
       "Each task can have its own cloud Linux desktop VM. After switching the execution world to VM, you can watch the desktop live and take over.",
@@ -652,6 +652,15 @@ export const en: Messages = {
     discardConfirm: "This task has {dirty} uncommitted changes and {commits} commits. Permanently discard it?",
     discardFailed: "Could not discard task",
     legacyTask: "This legacy worktree has no PiWin review state; handle it manually or create a guarded task.",
+    dockerCopy: "Docker private task copy — not yet in the host worktree.",
+    dockerChanges: "{n} files changed only inside Docker.",
+    dockerNoChanges: "No private Docker code changes.",
+    importDocker: "Import patch",
+    dockerImportConfirm: "Import Docker's patch for {n} files into this task worktree? The copy will then be closed before review.",
+    dockerImportFailed: "Could not import Docker patch",
+    discardDocker: "Discard Docker copy",
+    dockerDiscardConfirm: "Discard Docker-only changes in {n} files? This cannot be undone.",
+    dockerDiscardFailed: "Could not discard Docker copy",
   },
   trajectory: {
     tools: "{n} tool calls",
