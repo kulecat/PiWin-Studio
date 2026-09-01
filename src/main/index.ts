@@ -98,10 +98,12 @@ import {
 } from "./files";
 import {
   createWorktree,
+  discardTask,
   isGitRepo,
   listBranches,
   listWorktrees,
   mergeWorktree,
+  prepareWorktreeReview,
   removeWorktree,
   worktreeStatus,
 } from "./worktrees";
@@ -388,13 +390,21 @@ function registerIpc(): void {
   ipcMain.handle(IPC.removeWorktree, (_e, path: string, wt: string, branch?: string) =>
     removeWorktree(path, wt, branch),
   );
-  ipcMain.handle(IPC.worktreeStatus, (_e, path: string, wt: string, branch: string) =>
-    worktreeStatus(path, wt, branch),
+  ipcMain.handle(IPC.worktreeStatus, (_e, path: string, wt: string, branch: string, taskId?: string) =>
+    worktreeStatus(path, wt, branch, taskId),
+  );
+  ipcMain.handle(IPC.worktreeReview, (_e, path: string, wt: string, branch: string, taskId: string) =>
+    prepareWorktreeReview(path, wt, branch, taskId),
   );
   ipcMain.handle(
     IPC.worktreeMerge,
-    (_e, path: string, wt: string, branch: string, message?: string) =>
-      mergeWorktree(path, wt, branch, message),
+    (_e, path: string, wt: string, branch: string, taskId: string, message?: string) =>
+      mergeWorktree(path, wt, branch, taskId, message),
+  );
+  ipcMain.handle(
+    IPC.worktreeDiscard,
+    (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
+      discardTask(path, wt, branch, taskId, confirmed),
   );
   ipcMain.handle(IPC.deploymentsConfigured, () => deploymentsConfigured());
   ipcMain.handle(IPC.deploymentsProjects, () => listVercelProjects());

@@ -14,6 +14,7 @@ import {
 import { useAppStore, type ChatState } from "@/stores/app-store";
 import { isAssistantMessage, isUserMessage, userMessageText } from "@/lib/pi-messages";
 import type { AssistantMessage } from "@/lib/pi-messages";
+import type { WorktreeTaskRef } from "@shared/protocol";
 import { formatCost, formatTokens, shortenPath } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Translator } from "@/lib/i18n";
@@ -83,7 +84,7 @@ function WorktreeSection(): React.JSX.Element | null {
   const activeProjectIsGit = useAppStore((s) => s.activeProjectIsGit);
   const chats = useAppStore((s) => s.chats);
   const openChat = useAppStore((s) => s.openChat);
-  const [worktrees, setWorktrees] = useState<{ path: string; branch: string }[]>([]);
+  const [worktrees, setWorktrees] = useState<{ path: string; branch: string; task?: WorktreeTaskRef }[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   const openCwds = useMemo(
@@ -130,7 +131,12 @@ function WorktreeSection(): React.JSX.Element | null {
               onClick={() =>
                 void openChat({
                   cwd: w.path,
-                  worktree: { branch: w.branch, projectPath: activeProjectPath! },
+                  worktree: {
+                    branch: w.branch,
+                    projectPath: activeProjectPath!,
+                    taskId: w.task?.taskId,
+                    baseCommit: w.task?.baseCommit,
+                  },
                 })
               }
               className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[11px] text-fg-secondary transition-colors hover:border-border-strong hover:text-accent"
@@ -142,10 +148,31 @@ function WorktreeSection(): React.JSX.Element | null {
               disabled={busy === w.path}
               onClick={() => {
                 setBusy(w.path);
-                void window.pi.worktrees
-                  .remove(activeProjectPath!, w.path, w.branch)
-                  .then(refresh)
-                  .finally(() => setBusy(null));
+                void (async () => {
+                  if (w.task) {
+                    let result = await window.pi.worktrees.discard(
+                      activeProjectPath!,
+                      w.path,
+                      w.branch,
+                      w.task.taskId,
+                      false,
+                    );
+                    if (result.requiresConfirmation) {
+                      if (!window.confirm(t("worktree.discardConfirm", { dirty: result.dirtyFiles, commits: result.ahead }))) return;
+                      result = await window.pi.worktrees.discard(
+                        activeProjectPath!,
+                        w.path,
+                        w.branch,
+                        w.task.taskId,
+                        true,
+                      );
+                    }
+                    if (!result.discarded) throw new Error(result.error ?? t("worktree.discardFailed"));
+                  } else {
+                    await window.pi.worktrees.remove(activeProjectPath!, w.path, w.branch);
+                  }
+                  refresh();
+                })().finally(() => setBusy(null));
               }}
               className="shrink-0 rounded-lg border border-border px-2.5 py-1 text-[11px] text-fg-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
             >

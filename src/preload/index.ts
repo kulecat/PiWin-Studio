@@ -30,7 +30,9 @@ import type {
   SessionSearchHit,
   UsageStats,
   WorktreeMergeResult,
+  WorktreeDiscardResult,
   WorktreeStatusInfo,
+  WorktreeTaskRef,
   PromptItem,
   ScheduledTask,
   SkillItem,
@@ -254,21 +256,32 @@ const api = {
       path: string,
       hint?: string,
       baseBranch?: string,
-    ): Promise<{ path: string; branch: string }> =>
+    ): Promise<{ path: string; branch: string; task: WorktreeTaskRef }> =>
       ipcRenderer.invoke(IPC.createWorktree, path, hint, baseBranch),
-    list: (path: string): Promise<{ path: string; branch: string; isMain: boolean }[]> =>
+    list: (path: string): Promise<{ path: string; branch: string; isMain: boolean; task?: WorktreeTaskRef }[]> =>
       ipcRenderer.invoke(IPC.listWorktrees, path),
     branches: (path: string): Promise<{ current: string; branches: string[] }> =>
       ipcRenderer.invoke(IPC.listBranches, path),
-    status: (path: string, wt: string, branch: string): Promise<WorktreeStatusInfo> =>
-      ipcRenderer.invoke(IPC.worktreeStatus, path, wt, branch),
+    status: (path: string, wt: string, branch: string, taskId?: string): Promise<WorktreeStatusInfo> =>
+      ipcRenderer.invoke(IPC.worktreeStatus, path, wt, branch, taskId),
+    prepareReview: (path: string, wt: string, branch: string, taskId: string): Promise<WorktreeStatusInfo> =>
+      ipcRenderer.invoke(IPC.worktreeReview, path, wt, branch, taskId),
     merge: (
       path: string,
       wt: string,
       branch: string,
+      taskId: string,
       message?: string,
     ): Promise<WorktreeMergeResult> =>
-      ipcRenderer.invoke(IPC.worktreeMerge, path, wt, branch, message),
+      ipcRenderer.invoke(IPC.worktreeMerge, path, wt, branch, taskId, message),
+    discard: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      confirmed: boolean,
+    ): Promise<WorktreeDiscardResult> =>
+      ipcRenderer.invoke(IPC.worktreeDiscard, path, wt, branch, taskId, confirmed),
     remove: (path: string, worktreePath: string, branch?: string): Promise<void> =>
       ipcRenderer.invoke(IPC.removeWorktree, path, worktreePath, branch),
   },

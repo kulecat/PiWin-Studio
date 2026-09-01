@@ -122,6 +122,25 @@ and recoverable worktree-based agent tasks.
   works"` succeeds. The previous auto-runner fallback diagnosis is now
   historical; restart PiWin to let a new process re-probe the usable runner.
 
+### 2026-09-01 — Guarded task-worktree lifecycle
+
+- Hardened the existing upstream worktree feature rather than creating a
+  parallel implementation. New PiWin tasks use `piwin/task/*` branches under
+  `~/.piwin/task-worktrees/` and record local-only metadata in the repository's
+  Git common directory.
+- Task creation now requires a clean primary worktree. A task records its base
+  commit and merge target at creation time.
+- Added the explicit lifecycle `active → review_ready → merged/discarded`.
+  Preparing review creates an isolated snapshot commit on the task branch;
+  merge requires a human confirmation and refuses if the task changed after
+  review, the primary checkout is dirty, or the merge target moved.
+- Replaced silent forced cleanup for PiWin-managed tasks with an explicit
+  discard confirmation. The legacy `pi/*` cleanup path now refuses arbitrary
+  branches and dirty worktrees.
+- This is the review boundary only. Docker still does not have a writable
+  private task checkout, and file-tool routing remains the next containment
+  step.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -152,9 +171,12 @@ and recoverable worktree-based agent tasks.
   `pnpm build`, and `pnpm dist:win`.
 - Verified Docker Desktop 29.7.2 with the actual restricted profile: non-root
   execution, read-only workspace, temporary writable path, and denied network.
+- Ran a disposable Git-repository smoke test for guarded tasks: creation,
+  review snapshot, rejection of post-review mutation, reviewed merge, and
+  explicit cleanup all succeeded.
 - Final installer SHA-256:
-  `0BCE2BF18D617089F5E16995E1BB50BA37FF044DEA551EA21CFF5AB15DC5559E`
-  (`PiWin Studio-0.1.4-win-x64.exe`, 133,893,623 bytes).
+  `E4F8FCA910352227CF227887203F1223443876696775306DB698CDCDEC5354A9`
+  (`PiWin Studio-0.1.5-win-x64.exe`, 133,898,147 bytes).
 
 ## Known limitations / blockers
 
@@ -167,18 +189,23 @@ and recoverable worktree-based agent tasks.
 - The packaged desktop UI has not yet had a manual end-to-end smoke test on a
   clean user profile.
 - The current local PowerShell runner is a convenience runner, not a security
-  boundary. Docker now restricts routed commands, but all file-tool routing,
-  WSL2 containment, and path/network policy controls remain pending.
+  boundary. Docker now restricts routed commands, but writable private task
+  checkouts, all file-tool routing, WSL2 containment, and path/network policy
+  controls remain pending.
 
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer.
 2. Extend the existing allow / ask / deny gate with workspace-path and network
    destination rules.
-3. Route all file operations through an isolated Docker + Git-worktree task,
-   then add a recovery flow for changes.
-4. Add WSL2 containment profiles and explicit host-execution confirmation.
-5. Persist isolated worktree tasks, checkpoints, merge state, and recovery
+3. Create a Docker-private checkout for each guarded task, then import a
+   validated task patch into its host review worktree.
+4. Route all first-party file operations through that same task boundary.
+5. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
+   experimental after all built-in tool routes are verified.
+6. Add the proxy-container allowlist and privacy-preserving network audit.
+7. Add WSL2 containment profiles and explicit host-execution confirmation.
+8. Persist isolated worktree tasks, checkpoints, merge state, and recovery
    information for multi-agent workflows.
 
 ## Working agreement

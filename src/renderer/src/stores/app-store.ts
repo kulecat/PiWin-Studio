@@ -79,7 +79,7 @@ export interface ChatState {
   /** 项目文件树面板 */
   filesOpen: boolean;
   /** set when this chat runs in an isolated git worktree */
-  worktree?: { branch: string; projectPath: string };
+  worktree?: { branch: string; projectPath: string; taskId?: string; baseCommit?: string };
   /** live output of a user-initiated bash command (`!cmd`) */
   bashRunning: boolean;
   bashOutput: string;
@@ -243,7 +243,7 @@ interface AppState {
     presetId?: string;
     sessionFile?: string;
     initialPrompt?: string;
-    worktree?: { branch: string; projectPath: string };
+    worktree?: { branch: string; projectPath: string; taskId?: string; baseCommit?: string };
   }): Promise<void>;
   openWorktreeChat(options?: {
     /** branch the new worktree is created from (default: current HEAD) */
@@ -1295,7 +1295,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   async openWorktreeChat(options) {
     const projectPath = get().activeProjectPath;
     if (!projectPath) return;
-    const { path, branch } = await window.pi.worktrees.create(
+    const { path, branch, task } = await window.pi.worktrees.create(
       projectPath,
       options?.taskHint,
       options?.baseBranch,
@@ -1303,7 +1303,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().openChat({
       cwd: path,
       kind: "coding",
-      worktree: { branch, projectPath },
+      worktree: { branch, projectPath, taskId: task.taskId, baseCommit: task.baseCommit },
       initialPrompt: options?.initialPrompt,
     });
   },

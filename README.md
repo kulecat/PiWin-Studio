@@ -46,7 +46,7 @@ Each chat runs the pi SDK (`AgentSessionRuntime`) inside its own isolated Electr
 ### Core chat & multitasking
 
 - **Parallel tasks** — every chat lives in its own utility process: crash-isolated, independently abortable
-- **Git worktree tasks** — one click runs an agent in a dedicated worktree + branch (`pi/task-*`); multiple agents edit code simultaneously without conflicts, then merge back from the built-in merge panel
+- **Guarded Git worktree tasks** — a clean primary checkout creates a `piwin/task/*` branch; PiWin freezes a review snapshot before an explicit human-confirmed merge, and refuses a moved target or post-review mutation
 - **Session tree & forking** — visual history tree; fork from any message (full history kept in the same file, switch branches anytime); "edit & fork" any user message; abandoned branches can carry an LLM-generated summary into the new branch
 - **Streaming UI** — collapsible thinking blocks, streaming Markdown with dual-theme shiki highlighting, cursor animation
 - **Tool call visualization** — live bash output, read/grep/ls results, inline diffs for edits, file previews for writes, with running/success/failure states and per-category styling

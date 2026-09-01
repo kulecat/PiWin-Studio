@@ -691,18 +691,46 @@ export interface SessionTreeNode {
   children: SessionTreeNode[];
 }
 
-/** One full-text search hit across session files. */
+/** Lifecycle state of a PiWin-managed task branch. */
+export type WorktreeTaskState = "active" | "review_ready" | "merged" | "discarded";
+
+/** Stable identity for a task worktree. The metadata lives in the repository's Git data, not the source tree. */
+export interface WorktreeTaskRef {
+  taskId: string;
+  branch: string;
+  projectPath: string;
+  baseCommit: string;
+  state: WorktreeTaskState;
+}
+
 export interface WorktreeStatusInfo {
   mainBranch: string;
   dirtyFiles: number;
   ahead: number;
   changedFiles: string[];
+  /** Present for worktrees created by PiWin's guarded task flow. */
+  task?: {
+    taskId: string;
+    state: WorktreeTaskState;
+    baseCommit: string;
+    targetAdvanced: boolean;
+    targetBranchChanged: boolean;
+    taskChangedAfterReview: boolean;
+  };
 }
 
 export interface WorktreeMergeResult {
   merged: boolean;
   mainBranch: string;
   mergedCommits: number;
+  error?: string;
+}
+
+export interface WorktreeDiscardResult {
+  discarded: boolean;
+  requiresConfirmation: boolean;
+  dirtyFiles: number;
+  ahead: number;
   error?: string;
 }
 
@@ -945,7 +973,9 @@ export const IPC = {
   listBranches: "worktree:branches",
   removeWorktree: "worktree:remove",
   worktreeStatus: "worktree:status",
+  worktreeReview: "worktree:review",
   worktreeMerge: "worktree:merge",
+  worktreeDiscard: "worktree:discard",
   authStartLogin: "auth:startLogin",
   authPromptResponse: "auth:promptResponse",
   authCancelLogin: "auth:cancelLogin",

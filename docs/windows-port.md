@@ -52,15 +52,38 @@ $env:PIWIN_DOCKER_CPUS = "2"
 $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
 ```
 
-`readonly` mounts the workspace read-only and makes PiWin's `write` / `edit`
-tools reject changes. `readwrite` is the default because a coding task needs
-to edit its selected workspace, but it is not rollback protection: use a Git
-worktree for that boundary.
+`readonly` is the default: it mounts the workspace read-only and makes PiWin's
+`write` / `edit` tools reject changes. Set `readwrite` only for a task that
+needs to edit its selected workspace. It is not rollback protection by itself:
+use the guarded Git task flow below for that boundary.
 
 This is a **command-execution** boundary, not a claim that all Agent behavior
 is isolated. PiWin's host process still loads trusted Pi extensions and serves
 some file operations. A later phase will route all file operations through the
-same boundary and pair Docker with a dedicated worktree.
+same boundary and pair Docker with a private task checkout.
+
+## Guarded Git task worktrees
+
+PiWin creates a new task only when the primary worktree is clean. Each task is
+created under `~/.piwin/task-worktrees/` on a `piwin/task/*` branch; the primary
+working copy is never the task directory. Local-only task metadata is stored in
+the repository's Git common directory as `piwin-tasks.json`, not in source
+control.
+
+The lifecycle is deliberately explicit:
+
+1. **Active** — the agent works only in the task worktree.
+2. **Prepare review** — PiWin commits the task's current changes to an isolated
+   review snapshot on the task branch.
+3. **Merge** — after a human confirmation, PiWin merges only that exact review
+   commit. It refuses when the task changed after review, the primary worktree
+   is dirty, the target branch changed, or the target commit moved.
+4. **Discard** — deleting a task containing changes requires a separate explicit
+   confirmation. The task branch and its worktree are then removed together.
+
+This phase establishes the human review boundary. It does **not** yet give a
+Docker container a writable task checkout, and it does not make arbitrary
+extensions or MCP tools sandboxed.
 
 ## Execution audit log
 
@@ -87,6 +110,6 @@ with the recovery layer.
 
 The Docker restricted command profile is the first Windows containment layer.
 Native PowerShell and WSL2 are convenience runners and must always be visibly
-marked as host execution in the UI and audit log. Worktree-only writes,
-network allowlists, credential isolation, and all-file-tool routing remain
-planned.
+marked as host execution in the UI and audit log. Docker task-private
+checkouts, network allowlists, credential isolation, and all-file-tool routing
+remain planned.
