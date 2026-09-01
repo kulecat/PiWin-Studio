@@ -94,8 +94,8 @@ and recoverable worktree-based agent tasks.
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
-  Studio baseline in commit `ef0fbaa` with the upstream MIT license and
-  provenance notices included.
+  Studio starting point with the upstream MIT license and provenance notices
+  included.
 - Published the `main` branch to
   `https://github.com/kulecat/PiWin-Studio.git`. The repository uses the
   local Windows proxy only for this Git remote; no source, dependency
