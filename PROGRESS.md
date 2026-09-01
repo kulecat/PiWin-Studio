@@ -110,6 +110,18 @@ and recoverable worktree-based agent tasks.
   commands, not yet an all-tools sandbox. Custom extensions remain host-side;
   Git worktrees are still the planned isolation boundary for code changes.
 
+### 2026-09-01 — Local Docker and WSL verification
+
+- Installed Docker Desktop with the `desktop-linux` context and WSL2 backend;
+  client and daemon both report version `29.7.2`.
+- Ran the exact PiWin Docker restriction profile against the configured default
+  `node:22-bookworm-slim` image. The process ran as `uid=1000(node)`, writes
+  to the read-only workspace mount were blocked, `/tmp` remained writable,
+  and DNS/network access was blocked.
+- Completed Ubuntu provisioning and confirmed `wsl -d Ubuntu -- echo "WSL
+  works"` succeeds. The previous auto-runner fallback diagnosis is now
+  historical; restart PiWin to let a new process re-probe the usable runner.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -138,19 +150,17 @@ and recoverable worktree-based agent tasks.
   privilege, IPC, and resource controls.
 - Rebuilt after the Docker restricted command profile with `pnpm typecheck`,
   `pnpm build`, and `pnpm dist:win`.
+- Verified Docker Desktop 29.7.2 with the actual restricted profile: non-root
+  execution, read-only workspace, temporary writable path, and denied network.
 - Final installer SHA-256:
   `0BCE2BF18D617089F5E16995E1BB50BA37FF044DEA551EA21CFF5AB15DC5559E`
   (`PiWin Studio-0.1.4-win-x64.exe`, 133,893,623 bytes).
 
 ## Known limitations / blockers
 
-- This machine lists an Ubuntu WSL distribution, but a test Linux command does
-  not finish. In auto mode PiWin now uses PowerShell until the local WSL setup
-  is repaired. The WSL proxy warning should be investigated separately if WSL
-  support is needed.
-- Docker Desktop is not currently available on this machine, so the restricted
-  Docker invocation has been compiled and inspected but not yet run against a
-  real daemon.
+- WSL now works, but it warns that a Windows `localhost` proxy is not mirrored
+  into WSL NAT mode. This does not affect the verified Docker profile; configure
+  a reachable proxy inside WSL only if a Linux-side tool needs outbound access.
 - The generated installer is not Authenticode-signed. Windows may show an
   unknown-publisher warning until a release code-signing certificate is
   configured.
