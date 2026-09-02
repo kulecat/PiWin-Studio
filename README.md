@@ -48,6 +48,7 @@ Each chat runs the pi SDK (`AgentSessionRuntime`) inside its own isolated Electr
 - **Parallel tasks** — every chat lives in its own utility process: crash-isolated, independently abortable
 - **Guarded Git worktree tasks** — a clean primary checkout creates a `piwin/task/*` branch; PiWin freezes a review snapshot before an explicit human-confirmed merge, and refuses a moved target or post-review mutation
 - **Recoverable review queue** — each individually approved task snapshot is persisted locally; non-overlapping snapshots merge in order, while a changed target, dirty primary checkout, overlapping files, or Git failure pauses the queue before an unsafe merge
+- **Mission Control task ledger** — shows durable task lifecycle events, checkpoints, queue pauses, detected changed paths, and voluntary path-claim overlap warnings before parallel work collides
 - **Private writable Docker tasks** — Docker commands write only to a task-specific volume; PiWin previews, validates, and human-confirms a patch import into the guarded worktree before review
 - **Session tree & forking** — visual history tree; fork from any message (full history kept in the same file, switch branches anytime); "edit & fork" any user message; abandoned branches can carry an LLM-generated summary into the new branch
 - **Streaming UI** — collapsible thinking blocks, streaming Markdown with dual-theme shiki highlighting, cursor animation

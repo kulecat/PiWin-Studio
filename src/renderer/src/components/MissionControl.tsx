@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Check,
+  ClipboardList,
   GitBranch,
   GitFork,
   Loader2,
   MessageSquare,
   Plus,
+  RefreshCw,
   ShieldAlert,
   Wrench,
   X,
@@ -14,7 +16,7 @@ import {
 import { useAppStore, type ChatState } from "@/stores/app-store";
 import { isAssistantMessage, isUserMessage, userMessageText } from "@/lib/pi-messages";
 import type { AssistantMessage } from "@/lib/pi-messages";
-import type { WorktreeTaskRef } from "@shared/protocol";
+import type { WorktreeTaskDashboard, WorktreeTaskDashboardItem, WorktreeTaskRef } from "@shared/protocol";
 import { formatCost, formatTokens, shortenPath } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Translator } from "@/lib/i18n";
@@ -181,6 +183,185 @@ function WorktreeSection(): React.JSX.Element | null {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function taskStateLabel(task: WorktreeTaskDashboardItem, t: Translator): string {
+  switch (task.state) {
+    case "active": return t("mission.taskStateActive");
+    case "review_ready": return t("mission.taskStateReview");
+    case "merge_queued": return t("mission.taskStateQueued");
+    case "merged": return t("mission.taskStateMerged");
+    case "discarded": return t("mission.taskStateDiscarded");
+  }
+}
+
+function taskEventLabel(kind: WorktreeTaskDashboard["events"][number]["kind"], t: Translator): string {
+  switch (kind) {
+    case "task_created": return t("mission.auditCreated");
+    case "review_prepared": return t("mission.auditReviewed");
+    case "merge_queued": return t("mission.auditQueued");
+    case "queue_paused": return t("mission.auditPaused");
+    case "queue_cancelled": return t("mission.auditUnqueued");
+    case "merge_completed": return t("mission.auditMerged");
+    case "checkpoint_restored": return t("mission.auditRestored");
+    case "path_claims_updated": return t("mission.auditClaims");
+    case "task_discarded": return t("mission.auditDiscarded");
+  }
+}
+
+/**
+ * Read-only task ledger plus voluntary project-path claims. Claims are visible
+ * conflict warnings, never a lock that blocks a human from working.
+ */
+function TaskGovernanceSection(): React.JSX.Element | null {
+  const t = useT();
+  const activeProjectPath = useAppStore((s) => s.activeProjectPath);
+  const activeProjectIsGit = useAppStore((s) => s.activeProjectIsGit);
+  const chats = useAppStore((s) => s.chats);
+  const [dashboard, setDashboard] = useState<WorktreeTaskDashboard | null>(null);
+  const [claimsDraft, setClaimsDraft] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!activeProjectPath || !activeProjectIsGit) {
+      setDashboard(null);
+      return;
+    }
+    try {
+      setDashboard(await window.pi.worktrees.dashboard(activeProjectPath));
+      setError(null);
+    } catch (caught) {
+      setDashboard(null);
+      setError((caught as Error).message);
+    }
+  }, [activeProjectPath, activeProjectIsGit]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, chats]);
+
+  const saveClaims = async (task: WorktreeTaskDashboardItem): Promise<void> => {
+    if (!activeProjectPath) return;
+    setSaving(task.taskId);
+    setError(null);
+    try {
+      const raw = claimsDraft[task.taskId] ?? task.claimedPaths.join(", ");
+      setDashboard(await window.pi.worktrees.setPathClaims(
+        activeProjectPath,
+        task.worktreePath,
+        task.branch,
+        task.taskId,
+        raw.split(/[\r\n,]/),
+      ));
+      setClaimsDraft((current) => ({ ...current, [task.taskId]: raw }));
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const tasks = dashboard?.tasks ?? [];
+  const events = dashboard?.events ?? [];
+  if (!dashboard && !error) return null;
+  if (tasks.length === 0 && events.length === 0 && !error) return null;
+
+  return (
+    <div className="pt-6">
+      <div className="flex items-center justify-between gap-3 pb-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">
+            {t("mission.governanceTitle")}
+          </div>
+          <p className="pt-0.5 text-[10.5px] text-fg-muted">{t("mission.governanceHint")}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="rounded-lg border border-border p-1.5 text-fg-muted hover:border-border-strong hover:text-accent"
+          title={t("mission.refreshGovernance")}
+        >
+          <RefreshCw size={12} />
+        </button>
+      </div>
+
+      {error && <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-2.5 py-2 text-[11px] text-danger">{error}</div>}
+
+      {tasks.length > 0 && (
+        <div className="space-y-2">
+          {tasks.map((task) => {
+            const rawClaims = claimsDraft[task.taskId] ?? task.claimedPaths.join(", ");
+            return (
+              <div key={task.taskId} className="rounded-xl border border-border bg-bg px-3 py-2.5">
+                <div className="flex items-start gap-2">
+                  <ClipboardList size={13} className="mt-0.5 shrink-0 text-fg-muted" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="truncate font-mono text-[11.5px] text-fg-secondary">{task.branch}</span>
+                      <span className="rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-fg-muted">
+                        {taskStateLabel(task, t)}
+                      </span>
+                      {task.queue && <span className="text-[10px] text-accent">{t("mission.queuePosition", { n: task.queue.position })}</span>}
+                      <span className="text-[10px] text-fg-muted">{t("mission.checkpoints", { n: task.checkpointCount })}</span>
+                    </div>
+                    {task.queue?.blockedReason && (
+                      <div className="pt-1 text-[10.5px] text-warning">{t("mission.queueBlocked")}: {task.queue.blockedReason}</div>
+                    )}
+                    {task.conflicts.length > 0 && (
+                      <div className="pt-1 text-[10.5px] text-warning">
+                        {t("mission.pathConflict", { n: task.conflicts.length })}: {task.conflicts.map((conflict) => conflict.branch).join(", ")}
+                        <div className="truncate font-mono text-[10px] text-fg-muted" title={task.conflicts.flatMap((conflict) => conflict.paths).join("\n")}>
+                          {task.conflicts.flatMap((conflict) => conflict.paths).slice(0, 3).join(" · ")}
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-1.5 flex gap-1.5">
+                      <input
+                        value={rawClaims}
+                        onChange={(event) => setClaimsDraft((current) => ({ ...current, [task.taskId]: event.target.value }))}
+                        placeholder={t("mission.claimPathsPlaceholder")}
+                        disabled={task.state === "merged" || saving === task.taskId}
+                        className="min-w-0 flex-1 rounded-lg border border-border bg-bg-secondary px-2 py-1 text-[10.5px] text-fg outline-none placeholder:text-fg-muted focus:border-accent disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        disabled={task.state === "merged" || saving === task.taskId}
+                        onClick={() => void saveClaims(task)}
+                        className="rounded-lg border border-border px-2 py-1 text-[10.5px] text-fg-secondary hover:border-border-strong hover:text-accent disabled:opacity-40"
+                      >
+                        {saving === task.taskId ? <Loader2 size={11} className="animate-spin" /> : t("mission.saveClaims")}
+                      </button>
+                    </div>
+                    {task.changedPaths.length > 0 && (
+                      <div className="truncate pt-1 text-[10px] text-fg-muted" title={task.changedPaths.join("\n")}>
+                        {t("mission.changedPaths", { n: task.changedPaths.length })}: {task.changedPaths.slice(0, 3).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <div className="mt-2 rounded-xl border border-border bg-bg px-3 py-2">
+          <div className="pb-1 text-[10.5px] font-medium text-fg-secondary">{t("mission.auditTitle")}</div>
+          <div className="space-y-1">
+            {events.slice(0, 8).map((event) => (
+              <div key={event.id} className="flex gap-2 text-[10px] text-fg-muted">
+                <span className="shrink-0 text-fg-secondary">{taskEventLabel(event.kind, t)}</span>
+                <span className="min-w-0 flex-1 truncate" title={event.detail}>{event.detail ?? event.taskId.slice(0, 8)}</span>
+                <span className="shrink-0">{new Date(event.createdAt).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -400,6 +581,7 @@ export function MissionControl(): React.JSX.Element {
           ))}
         </div>
 
+        {!isDaily && <TaskGovernanceSection />}
         {!isDaily && <WorktreeSection />}
       </div>
     </div>

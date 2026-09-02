@@ -292,6 +292,23 @@ and recoverable worktree-based agent tasks.
   second window cannot race a queue update. Mission Control's existing orphan
   task reopening now operates on the durable checkpoint/queue metadata.
 
+### 2026-09-02 — Mission Control task audit and path-conflict warnings
+
+- Extended the local Git-common-directory task store to schema version 3 with
+  a bounded local lifecycle event record. It tracks task creation, review
+  snapshot, queue/pause/cancel, merge, checkpoint restore, path-claim update,
+  and explicit discard. This is operational history, not a tamper-proof or
+  remote audit service.
+- Added a Mission Control task ledger that shows each persisted task's state,
+  queue position/pause reason, checkpoint count, recent events, and detected
+  Git/untracked paths. The existing orphan-worktree controls remain the direct
+  recovery point for a task whose chat is not currently open.
+- Added voluntary project-relative path claims. PiWin normalizes and validates
+  claims, then conservatively reports file/directory-prefix overlap with other
+  active tasks' claims and observed changes. It is an early warning only: it
+  never locks a path, assigns work automatically, or replaces Git conflict
+  handling.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -330,6 +347,10 @@ and recoverable worktree-based agent tasks.
   a confirmation-gated checkpoint restore removed post-review untracked work;
   all temporary task worktrees were discarded afterwards
   (`WORKTREE_QUEUE_SMOKE_OK`).
+- Ran a disposable Git-repository smoke test for the Mission Control task
+  ledger: directory/file path-claim overlap, observed changed-path reporting,
+  and durable creation/claim/review event records all passed
+  (`TASK_GOVERNANCE_SMOKE_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -376,9 +397,9 @@ and recoverable worktree-based agent tasks.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
    experimental after all built-in tool routes are verified.
 5. Add WSL2 containment profiles and explicit host-execution confirmation.
-6. Add task assignment, path-claim annotations, and a read-only multi-task
-   audit timeline; the current queue is deliberately conservative and does not
-   auto-resolve conflicts or resume an agent process.
+6. Add explicit task-to-agent assignment and a multi-task audit export; the
+   current local ledger and path claims are deliberately conservative and do
+   not auto-resolve conflicts or resume an agent process.
 
 ## Working agreement
 

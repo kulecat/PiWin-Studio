@@ -734,6 +734,62 @@ export interface WorktreeTaskCheckpoint {
   createdAt: string;
 }
 
+/** Local-only lifecycle records for a guarded task; stored beside Git metadata. */
+export type WorktreeTaskAuditEventKind =
+  | "task_created"
+  | "review_prepared"
+  | "merge_queued"
+  | "queue_paused"
+  | "queue_cancelled"
+  | "merge_completed"
+  | "checkpoint_restored"
+  | "path_claims_updated"
+  | "task_discarded";
+
+export interface WorktreeTaskAuditEvent {
+  id: string;
+  taskId: string;
+  kind: WorktreeTaskAuditEventKind;
+  createdAt: string;
+  detail?: string;
+  files?: string[];
+  checkpointId?: string;
+}
+
+export interface WorktreeTaskPathConflict {
+  taskId: string;
+  branch: string;
+  /** Exact file paths or conservative directory/path-claim overlaps. */
+  paths: string[];
+}
+
+/** Non-mutating Mission Control summary of a persisted guarded task. */
+export interface WorktreeTaskDashboardItem {
+  taskId: string;
+  worktreePath: string;
+  branch: string;
+  state: WorktreeTaskState;
+  createdAt: string;
+  targetBranch: string;
+  checkpointCount: number;
+  claimedPaths: string[];
+  changedPaths: string[];
+  conflicts: WorktreeTaskPathConflict[];
+  queue?: {
+    position: number;
+    queuedAt: string;
+    blockedReason?: string;
+    conflictingFiles?: string[];
+  };
+  lastEvent?: WorktreeTaskAuditEvent;
+}
+
+export interface WorktreeTaskDashboard {
+  tasks: WorktreeTaskDashboardItem[];
+  /** Most recent lifecycle records first; retained locally with a bounded history. */
+  events: WorktreeTaskAuditEvent[];
+}
+
 /** Stable identity for a task worktree. The metadata lives in the repository's Git data, not the source tree. */
 export interface WorktreeTaskRef {
   taskId: string;
@@ -1074,6 +1130,8 @@ export const IPC = {
   isGitRepo: "worktree:isGitRepo",
   createWorktree: "worktree:create",
   listWorktrees: "worktree:list",
+  worktreeDashboard: "worktree:dashboard",
+  worktreePathClaims: "worktree:pathClaims",
   listBranches: "worktree:branches",
   removeWorktree: "worktree:remove",
   worktreeStatus: "worktree:status",

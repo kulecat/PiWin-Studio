@@ -17,12 +17,16 @@ import type {
   DockerTaskPatchImportResult,
   DockerTaskPatchPreview,
   DockerTaskWorkspaceState,
+  WorktreeTaskAuditEvent,
+  WorktreeTaskAuditEventKind,
   WorktreeCheckpointKind,
   WorktreeCheckpointRestoreResult,
   WorktreeDiscardResult,
   WorktreeMergeResult,
   WorktreeQueueResult,
   WorktreeStatusInfo,
+  WorktreeTaskDashboard,
+  WorktreeTaskDashboardItem,
   WorktreeTaskCheckpoint,
   WorktreeTaskRef,
   WorktreeTaskState,
@@ -32,7 +36,8 @@ import { dockerFilteredWorkspaceCopyCommand } from "../host/docker-credential-po
 
 const exec = promisify(execFile);
 const TASKS_FILE = "piwin-tasks.json";
-const TASKS_SCHEMA_VERSION = 2;
+const TASKS_SCHEMA_VERSION = 3;
+const TASK_AUDIT_EVENT_LIMIT = 600;
 const DOCKER_PRIVATE_VOLUME_PREFIX = "piwin-task-";
 const DOCKER_PRIVATE_BASE_REF = "refs/piwin/private-base";
 
@@ -69,6 +74,8 @@ interface PersistedTask {
     conflictingFiles?: string[];
     checkedAt: string;
   };
+  /** User-declared project-relative paths used for conservative conflict warnings. */
+  pathClaims?: string[];
   dockerWorkspace?: DockerTaskWorkspaceRecord;
 }
 
@@ -82,6 +89,7 @@ interface TaskStore {
   version: number;
   tasks: PersistedTask[];
   mergeQueue: MergeQueueEntry[];
+  auditEvents: WorktreeTaskAuditEvent[];
 }
 
 export interface WorktreeInfo {
@@ -188,9 +196,9 @@ async function readTaskStore(root: string): Promise<TaskStore> {
   try {
     const raw = await readFile(await taskStorePath(root), "utf8");
     const parsed = JSON.parse(raw) as Partial<TaskStore>;
-    // Version 1 had no queue/checkpoint fields. Upgrade it in memory and write
-    // the new shape only after the next normal task-state mutation.
-    if ((parsed.version !== 1 && parsed.version !== TASKS_SCHEMA_VERSION) || !Array.isArray(parsed.tasks)) {
+    // Versions 1 and 2 predate durable task events/path claims. Upgrade in
+    // memory and write the new shape only after the next normal mutation.
+    if ((parsed.version !== 1 && parsed.version !== 2 && parsed.version !== TASKS_SCHEMA_VERSION) || !Array.isArray(parsed.tasks)) {
       throw new Error("unsupported task metadata");
     }
     return {
@@ -198,12 +206,14 @@ async function readTaskStore(root: string): Promise<TaskStore> {
       tasks: (parsed.tasks as PersistedTask[]).map((task) => ({
         ...task,
         checkpoints: task.checkpoints ?? [],
+        pathClaims: task.pathClaims ?? [],
       })),
       mergeQueue: Array.isArray(parsed.mergeQueue) ? parsed.mergeQueue : [],
+      auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return { version: TASKS_SCHEMA_VERSION, tasks: [], mergeQueue: [] };
+    if (code === "ENOENT") return { version: TASKS_SCHEMA_VERSION, tasks: [], mergeQueue: [], auditEvents: [] };
     // Do not silently overwrite malformed metadata: it is part of the audit trail.
     throw new Error("PiWin 任务元数据无法读取；请先备份 .git/piwin-tasks.json 后再重试");
   }
@@ -325,6 +335,58 @@ async function appendTaskCheckpoint(
 
 function latestCheckpoint(task: PersistedTask): WorktreeTaskCheckpoint | undefined {
   return task.checkpoints?.at(-1);
+}
+
+async function appendTaskAuditEvent(
+  root: string,
+  taskId: string,
+  kind: WorktreeTaskAuditEventKind,
+  options: Pick<WorktreeTaskAuditEvent, "detail" | "files" | "checkpointId"> = {},
+): Promise<void> {
+  const store = await readTaskStore(root);
+  store.auditEvents = [
+    ...store.auditEvents,
+    {
+      id: randomUUID(),
+      taskId,
+      kind,
+      createdAt: new Date().toISOString(),
+      ...options,
+      files: options.files?.slice(0, 64),
+    },
+  ].slice(-TASK_AUDIT_EVENT_LIMIT);
+  await writeTaskStore(root, store);
+}
+
+function normalizePathClaim(value: string): string | undefined {
+  const normalized = value.trim().replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+/g, "/");
+  if (!normalized || normalized.startsWith("/") || /^[a-z]:/i.test(normalized)) return undefined;
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return undefined;
+  return normalized.slice(0, 240);
+}
+
+function normalizePathClaims(claims: string[]): string[] {
+  const normalized = claims
+    .flatMap((claim) => claim.split(/[\r\n,]/))
+    .map(normalizePathClaim)
+    .filter((claim): claim is string => Boolean(claim));
+  return [...new Set(normalized)].sort().slice(0, 64);
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function overlappingPaths(left: string[], right: string[]): string[] {
+  const overlaps = new Set<string>();
+  for (const leftPath of left) {
+    for (const rightPath of right) {
+      if (!pathsOverlap(leftPath, rightPath)) continue;
+      overlaps.add(leftPath === rightPath ? leftPath : `${leftPath} ↔ ${rightPath}`);
+    }
+  }
+  return [...overlaps].sort().slice(0, 64);
 }
 
 function dockerVolumeName(task: PersistedTask): string {
@@ -822,6 +884,16 @@ export async function createWorktree(
     try {
       const store = await readTaskStore(root);
       store.tasks.push(task);
+      store.auditEvents = [
+        ...store.auditEvents,
+        {
+          id: randomUUID(),
+          taskId: task.id,
+          kind: "task_created" as const,
+          createdAt: task.createdAt,
+          detail: `Created ${branch} from ${baseRef}`,
+        },
+      ].slice(-TASK_AUDIT_EVENT_LIMIT);
       await writeTaskStore(root, store);
       return { path: worktreePath, branch, task: toTaskRef(task) };
     } catch (error) {
@@ -864,6 +936,127 @@ export async function listWorktrees(projectPath: string): Promise<WorktreeInfo[]
       (candidate) => samePath(candidate.worktreePath, worktree.path) && candidate.branch === worktree.branch,
     );
     return task ? { ...worktree, task: toTaskRef(task) } : worktree;
+  });
+}
+
+async function changedPathsForDashboard(task: PersistedTask): Promise<string[]> {
+  if (task.state === "merged" || task.state === "discarded") return [];
+  try {
+    const [diff, untracked] = await Promise.all([
+      git(task.worktreePath, "diff", "--name-only", "--diff-filter=ACDMRT", `${task.baseCommit}..HEAD`),
+      git(task.worktreePath, "ls-files", "--others", "--exclude-standard"),
+    ]);
+    return [...new Set([...diff.split("\n"), ...untracked.split("\n")].filter(Boolean))].sort().slice(0, 256);
+  } catch {
+    // A manually removed/repaired worktree still deserves an auditable card.
+    return [];
+  }
+}
+
+function isMutableTask(task: PersistedTask): boolean {
+  return task.state === "active" || task.state === "review_ready" || task.state === "merge_queued";
+}
+
+async function buildWorktreeTaskDashboard(root: string): Promise<WorktreeTaskDashboard> {
+  const store = await readTaskStore(root);
+  const visibleTasks = store.tasks.filter((task) => task.state !== "discarded");
+  const changedPaths = await Promise.all(visibleTasks.map((task) => changedPathsForDashboard(task)));
+  const events = [...store.auditEvents]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 160);
+  const lastEventByTask = new Map<string, WorktreeTaskAuditEvent>();
+  for (const event of events) {
+    if (!lastEventByTask.has(event.taskId)) lastEventByTask.set(event.taskId, event);
+  }
+
+  const items: WorktreeTaskDashboardItem[] = visibleTasks.map((task, index) => {
+    const queueIndex = store.mergeQueue.findIndex((entry) => entry.taskId === task.id);
+    return {
+      taskId: task.id,
+      worktreePath: task.worktreePath,
+      branch: task.branch,
+      state: task.state,
+      createdAt: task.createdAt,
+      targetBranch: task.targetBranch,
+      checkpointCount: task.checkpoints?.length ?? 0,
+      claimedPaths: task.pathClaims ?? [],
+      changedPaths: changedPaths[index],
+      conflicts: [],
+      queue: queueIndex >= 0 && task.queuedAt
+        ? {
+            position: queueIndex + 1,
+            queuedAt: task.queuedAt,
+            blockedReason: task.queueBlocked?.reason,
+            conflictingFiles: task.queueBlocked?.conflictingFiles,
+          }
+        : undefined,
+      lastEvent: lastEventByTask.get(task.id),
+    };
+  });
+
+  for (let leftIndex = 0; leftIndex < items.length; leftIndex += 1) {
+    const left = items[leftIndex];
+    const leftTask = visibleTasks[leftIndex];
+    if (!isMutableTask(leftTask)) continue;
+    const leftPaths = [...left.claimedPaths, ...left.changedPaths];
+    if (leftPaths.length === 0) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < items.length; rightIndex += 1) {
+      const right = items[rightIndex];
+      const rightTask = visibleTasks[rightIndex];
+      if (!isMutableTask(rightTask)) continue;
+      const paths = overlappingPaths(leftPaths, [...right.claimedPaths, ...right.changedPaths]);
+      if (paths.length === 0) continue;
+      left.conflicts.push({ taskId: right.taskId, branch: right.branch, paths });
+      right.conflicts.push({ taskId: left.taskId, branch: left.branch, paths });
+    }
+  }
+
+  return {
+    tasks: items.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    events,
+  };
+}
+
+/** Read-only Mission Control data; path overlaps are warnings, not write locks. */
+export async function worktreeTaskDashboard(projectPath: string): Promise<WorktreeTaskDashboard> {
+  const root = await primaryRoot(projectPath);
+  return buildWorktreeTaskDashboard(root);
+}
+
+/** Persist a task's project-relative path claims for conservative overlap warnings. */
+export async function setWorktreePathClaims(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  claims: string[],
+): Promise<WorktreeTaskDashboard> {
+  const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, async () => {
+    const task = await requireTask(root, worktreePath, branch, taskId);
+    if (!isMutableTask(task)) throw new Error("只能为进行中的任务声明路径。");
+    const rawClaims = claims.flatMap((claim) => claim.split(/[\r\n,]/)).filter((claim) => claim.trim());
+    if (rawClaims.some((claim) => !normalizePathClaim(claim))) {
+      throw new Error("路径声明必须是项目内相对路径，且不能包含 .. 或盘符。");
+    }
+    const normalized = normalizePathClaims(claims);
+    const store = await readTaskStore(root);
+    const index = store.tasks.findIndex((candidate) => candidate.id === task.id);
+    if (index < 0) throw new Error("PiWin 任务元数据不存在");
+    store.tasks[index] = { ...store.tasks[index], pathClaims: normalized };
+    store.auditEvents = [
+      ...store.auditEvents,
+      {
+        id: randomUUID(),
+        taskId: task.id,
+        kind: "path_claims_updated" as const,
+        createdAt: new Date().toISOString(),
+        detail: normalized.length ? `Declared ${normalized.length} path claim(s)` : "Cleared path claims",
+        files: normalized,
+      },
+    ].slice(-TASK_AUDIT_EVENT_LIMIT);
+    await writeTaskStore(root, store);
+    return buildWorktreeTaskDashboard(root);
   });
 }
 
@@ -989,7 +1182,11 @@ export async function prepareWorktreeReview(
     queuedAt: undefined,
     queueBlocked: undefined,
   });
-  await appendTaskCheckpoint(root, reviewedTask, "review", reviewCommit, task.targetCommit);
+  const checkpointedTask = await appendTaskCheckpoint(root, reviewedTask, "review", reviewCommit, task.targetCommit);
+  await appendTaskAuditEvent(root, task.id, "review_prepared", {
+    detail: `Prepared review snapshot ${reviewCommit.slice(0, 12)}`,
+    checkpointId: latestCheckpoint(checkpointedTask)?.id,
+  });
   return worktreeStatus(root, worktreePath, branch, task.id);
 }
 
@@ -1057,7 +1254,11 @@ async function mergeWorktreeAtRoot(
       mergedAt: new Date().toISOString(),
       mergedCommit: mainHead,
     });
-    await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mainHead);
+    const checkpointedTask = await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mainHead);
+    await appendTaskAuditEvent(root, task.id, "merge_completed", {
+      detail: "Review snapshot was already contained in the target branch",
+      checkpointId: latestCheckpoint(checkpointedTask)?.id,
+    });
     return { merged: true, mainBranch, mergedCommits: 0 };
   }
   try {
@@ -1068,7 +1269,11 @@ async function mergeWorktreeAtRoot(
       mergedAt: new Date().toISOString(),
       mergedCommit: mergedHead,
     });
-    await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mergedHead);
+    const checkpointedTask = await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mergedHead);
+    await appendTaskAuditEvent(root, task.id, "merge_completed", {
+      detail: `Merged into ${mainBranch} at ${mergedHead.slice(0, 12)}`,
+      checkpointId: latestCheckpoint(checkpointedTask)?.id,
+    });
     return { merged: true, mainBranch, mergedCommits };
   } catch (error) {
     try {
@@ -1150,6 +1355,9 @@ async function queueBlock(
   reason: string,
   conflictingFiles?: string[],
 ): Promise<QueueBlocker> {
+  const unchanged =
+    task.queueBlocked?.reason === reason &&
+    JSON.stringify(task.queueBlocked?.conflictingFiles ?? []) === JSON.stringify(conflictingFiles ?? []);
   await updateTask(root, task.id, {
     queueBlocked: {
       reason,
@@ -1157,6 +1365,9 @@ async function queueBlock(
       checkedAt: new Date().toISOString(),
     },
   });
+  if (!unchanged) {
+    await appendTaskAuditEvent(root, task.id, "queue_paused", { detail: reason, files: conflictingFiles });
+  }
   return { taskId: task.id, branch: task.branch, reason, conflictingFiles };
 }
 
@@ -1240,7 +1451,11 @@ async function mergeQueuedTask(root: string, task: PersistedTask, entry: MergeQu
     queuedAt: undefined,
     queueBlocked: undefined,
   });
-  await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mergedHead);
+  const checkpointedTask = await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mergedHead);
+  await appendTaskAuditEvent(root, task.id, "merge_completed", {
+    detail: `Merged queued snapshot into ${task.targetBranch} at ${mergedHead.slice(0, 12)}`,
+    checkpointId: latestCheckpoint(checkpointedTask)?.id,
+  });
   return { merged: true };
 }
 
@@ -1313,6 +1528,17 @@ export async function queueWorktreeMerge(
         checkpoints: [...(store.tasks[index].checkpoints ?? []), checkpoint],
       };
       store.mergeQueue.push({ taskId: task.id, queuedAt: now, message });
+      store.auditEvents = [
+        ...store.auditEvents,
+        {
+          id: randomUUID(),
+          taskId: task.id,
+          kind: "merge_queued" as const,
+          createdAt: now,
+          detail: `Queued review snapshot at position ${store.mergeQueue.length}`,
+          checkpointId: checkpoint.id,
+        },
+      ].slice(-TASK_AUDIT_EVENT_LIMIT);
       position = store.mergeQueue.length;
       await writeTaskStore(root, store);
     } else {
@@ -1351,6 +1577,16 @@ export async function unqueueWorktreeMerge(
       queueBlocked: undefined,
     };
     store.mergeQueue = store.mergeQueue.filter((entry) => entry.taskId !== task.id);
+    store.auditEvents = [
+      ...store.auditEvents,
+      {
+        id: randomUUID(),
+        taskId: task.id,
+        kind: "queue_cancelled" as const,
+        createdAt: new Date().toISOString(),
+        detail: "Removed from merge queue while keeping the review snapshot",
+      },
+    ].slice(-TASK_AUDIT_EVENT_LIMIT);
     await writeTaskStore(root, store);
     return worktreeStatus(root, worktreePath, branch, taskId);
   });
@@ -1402,6 +1638,17 @@ export async function restoreWorktreeCheckpoint(
         queueBlocked: undefined,
       };
       store.mergeQueue = store.mergeQueue.filter((entry) => entry.taskId !== task.id);
+      store.auditEvents = [
+        ...store.auditEvents,
+        {
+          id: randomUUID(),
+          taskId: task.id,
+          kind: "checkpoint_restored" as const,
+          createdAt: new Date().toISOString(),
+          detail: `Restored ${checkpoint.kind} checkpoint ${checkpoint.commit.slice(0, 12)}`,
+          checkpointId: checkpoint.id,
+        },
+      ].slice(-TASK_AUDIT_EVENT_LIMIT);
       await writeTaskStore(root, store);
       return { restored: true, requiresConfirmation: false, checkpoint };
     } catch (error) {
@@ -1480,6 +1727,16 @@ async function discardTaskAtRoot(
       queueBlocked: undefined,
     };
     store.mergeQueue = store.mergeQueue.filter((entry) => entry.taskId !== task.id);
+    store.auditEvents = [
+      ...store.auditEvents,
+      {
+        id: randomUUID(),
+        taskId: task.id,
+        kind: "task_discarded" as const,
+        createdAt: now,
+        detail: "Task worktree and branch discarded after explicit confirmation",
+      },
+    ].slice(-TASK_AUDIT_EVENT_LIMIT);
     await writeTaskStore(root, store);
     return {
       discarded: true,

@@ -182,6 +182,21 @@ It removes a queued entry and returns the task to review-ready state; it does
 not delete a Docker private volume, which must still be imported or discarded
 explicitly.
 
+### Mission Control task ledger and path-claim warnings
+
+Schema version 3 adds a bounded, local lifecycle event list to the same Git
+common-directory metadata. Mission Control shows recent creation, review,
+queue, pause, merge, checkpoint restore, path-claim, and discard events along
+with each task's queue state and checkpoint count. This is a local operational
+record, not a cloud service or a tamper-proof compliance log.
+
+An operator may declare project-relative paths such as `src/ui` or
+`docs/readme.md` for an active task. PiWin rejects absolute paths, drive
+prefixes, and `..` segments, compares those claims and observed Git/untracked
+changes across active tasks, and displays conservative directory/file overlap
+warnings. Claims never lock files, prevent a Git operation, assign an agent, or
+resolve a conflict; the guarded merge queue remains the enforcement boundary.
+
 ### Docker-private writable task workflow
 
 When `PIWIN_EXECUTION_RUNNER=docker` and
