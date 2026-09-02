@@ -720,7 +720,19 @@ export interface SessionTreeNode {
 }
 
 /** Lifecycle state of a PiWin-managed task branch. */
-export type WorktreeTaskState = "active" | "review_ready" | "merged" | "discarded";
+export type WorktreeTaskState = "active" | "review_ready" | "merge_queued" | "merged" | "discarded";
+
+/** A durable task checkpoint points at a Git commit, never an opaque file copy. */
+export type WorktreeCheckpointKind = "created" | "review" | "queued" | "merged";
+
+export interface WorktreeTaskCheckpoint {
+  id: string;
+  kind: WorktreeCheckpointKind;
+  commit: string;
+  /** The primary target commit observed when this checkpoint was made. */
+  targetCommit: string;
+  createdAt: string;
+}
 
 /** Stable identity for a task worktree. The metadata lives in the repository's Git data, not the source tree. */
 export interface WorktreeTaskRef {
@@ -729,6 +741,7 @@ export interface WorktreeTaskRef {
   projectPath: string;
   baseCommit: string;
   state: WorktreeTaskState;
+  checkpointCount?: number;
 }
 
 export interface WorktreeStatusInfo {
@@ -744,6 +757,16 @@ export interface WorktreeStatusInfo {
     targetAdvanced: boolean;
     targetBranchChanged: boolean;
     taskChangedAfterReview: boolean;
+    queue?: {
+      position: number;
+      queuedAt: string;
+      blockedReason?: string;
+      conflictingFiles?: string[];
+    };
+    recovery: {
+      checkpointCount: number;
+      latest?: WorktreeTaskCheckpoint;
+    };
   };
 }
 
@@ -751,6 +774,30 @@ export interface WorktreeMergeResult {
   merged: boolean;
   mainBranch: string;
   mergedCommits: number;
+  error?: string;
+}
+
+/** Result of adding one independently approved review snapshot to the merge queue. */
+export interface WorktreeQueueResult {
+  queued: boolean;
+  /** 1-based position after this request has been persisted. */
+  position?: number;
+  /** Queued snapshots actually merged during this drain pass. */
+  mergedTaskIds: string[];
+  /** Queue processing pauses here; no later task was attempted. */
+  blocked?: {
+    taskId: string;
+    branch: string;
+    reason: string;
+    conflictingFiles?: string[];
+  };
+  error?: string;
+}
+
+export interface WorktreeCheckpointRestoreResult {
+  restored: boolean;
+  requiresConfirmation: boolean;
+  checkpoint?: WorktreeTaskCheckpoint;
   error?: string;
 }
 
@@ -1032,6 +1079,9 @@ export const IPC = {
   worktreeStatus: "worktree:status",
   worktreeReview: "worktree:review",
   worktreeMerge: "worktree:merge",
+  worktreeQueue: "worktree:queue",
+  worktreeUnqueue: "worktree:unqueue",
+  worktreeRestoreCheckpoint: "worktree:restoreCheckpoint",
   worktreeDiscard: "worktree:discard",
   worktreeDockerPatch: "worktree:dockerPatch",
   worktreeDockerImport: "worktree:dockerImport",

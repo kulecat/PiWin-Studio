@@ -35,9 +35,9 @@
 
 > **来源说明：**PiWin Studio 是基于 [Bivor](https://github.com/ryanlab/bivor) 开发的 Windows/WSL2 适配项目。Bivor 的版权归 ryanlab（Copyright (c) 2026 ryanlab）所有，使用 MIT 许可证；详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-**PiWin Studio** 是基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的桌面工作台。它保留 Bivor 的 Electron/Pi SDK 基础，并新增 Windows 打包、PowerShell 执行兼容、Docker 受限命令执行和审计层。
+**PiWin Studio** 是基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的桌面工作台。它保留 Bivor 的 Electron/Pi SDK 基础，并新增 Windows 打包、PowerShell 执行兼容、Docker 受限命令执行、基于结构的 Bash 护栏和可恢复的 Git 任务审核控制。
 
-Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制、内置文件工具统一路由和私有任务副本补丁导入的显式 Docker 工具 profile。WSL2 隔离和可恢复多 Agent 工作流见 [docs/windows-port.md](docs/windows-port.md)。
+Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制、内置文件工具统一路由和私有任务副本补丁导入的显式 Docker 工具 profile。任务审核 checkpoint 与保守合并队列在重启后可恢复；WSL2 隔离见 [docs/windows-port.md](docs/windows-port.md)。
 
 每个会话都在独立的 Electron utility process 中运行 pi SDK（`AgentSessionRuntime`）。会话、认证、技能、提示模板、MCP 配置与 pi CLI 完全互通（`~/.pi/agent/`），终端与桌面端可以随时切换。
 
@@ -47,6 +47,7 @@ Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命�
 
 - **多任务并行** — 每个会话运行在独立 utility process 中,崩溃隔离、可独立中止
 - **受控 Git worktree 任务** — 主工作区干净时才创建 `piwin/task/*` 任务分支；先冻结审核快照，再由人工确认合并，主分支变化或审核后再修改都会被拒绝
+- **可恢复审核队列** — 每个经人工确认的任务快照都会本地持久化；只有文件不重叠的快照才会按顺序合并，目标变动、主工作区脏、文件交集或 Git 失败都会在不安全合并前暂停队列
 - **Docker 可写私有任务** — Docker 命令只写入任务专属 volume；PiWin 预览、校验并在人工确认后将补丁导入受控 worktree，之后才能审核
 - **会话树与分叉** — 可视化历史树,任意消息处分叉(同文件保留全部历史,随时切回);任意用户消息「编辑并分叉」;被放弃分支的经验可由 LLM 总结后带入新分支
 - **流式对话** — 思考过程折叠展示、Markdown 流式渲染 + shiki 双主题代码高亮、光标动画

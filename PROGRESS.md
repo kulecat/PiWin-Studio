@@ -272,6 +272,26 @@ and recoverable worktree-based agent tasks.
   of complete static analysis or a replacement for the Docker/worktree
   enforcement boundary.
 
+### 2026-09-02 — Recoverable guarded task merge queue
+
+- Extended the local-only Git-common-directory task store to schema version 2.
+  Each guarded task now records durable created, review, queued, and merged Git
+  checkpoints, plus queue state and a persisted pause reason. Existing version
+  1 task metadata is normalized on read without changing user source files.
+- Added a per-repository in-process merge lock and a queue whose entries are
+  individually confirmed in the UI. It merges only a safe prefix in recorded
+  order: the primary checkout must be clean and on the intended branch, the
+  reviewed task must remain unchanged, and changed-file sets must not overlap
+  with target changes since that task began. Overlap, rewritten history, target
+  mismatch, or a Git failure pauses without attempting a guessed resolution.
+- Added queue status, cancel-queue, and latest-checkpoint restore controls to
+  the worktree review card. Restoring asks for a second destructive confirmation
+  and resets only the task worktree, including non-ignored untracked files; a
+  retained Docker-private copy must still be handled explicitly.
+- Direct merge and task discard share the same per-repository lock, so a
+  second window cannot race a queue update. Mission Control's existing orphan
+  task reopening now operates on the durable checkpoint/queue metadata.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -305,6 +325,11 @@ and recoverable worktree-based agent tasks.
 - Ran a disposable Git-repository smoke test for guarded tasks: creation,
   review snapshot, rejection of post-review mutation, reviewed merge, and
   explicit cleanup all succeeded.
+- Ran a disposable Git-repository smoke test for the review queue: a safe
+  sequence merged in recorded order; a same-file overlap paused before merge;
+  a confirmation-gated checkpoint restore removed post-review untracked work;
+  all temporary task worktrees were discarded afterwards
+  (`WORKTREE_QUEUE_SMOKE_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -351,8 +376,9 @@ and recoverable worktree-based agent tasks.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
    experimental after all built-in tool routes are verified.
 5. Add WSL2 containment profiles and explicit host-execution confirmation.
-6. Persist isolated worktree tasks, checkpoints, merge state, and recovery
-   information for multi-agent workflows.
+6. Add task assignment, path-claim annotations, and a read-only multi-task
+   audit timeline; the current queue is deliberately conservative and does not
+   auto-resolve conflicts or resume an agent process.
 
 ## Working agreement
 

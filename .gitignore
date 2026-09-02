@@ -4,6 +4,7 @@ dist/
 # Electron-builder verification outputs use this prefix; do not publish them
 # as source or release artifacts.
 dist-*/
+.tmp-worktree-queue-smoke/
 .DS_Store
 *.log
 *.tsbuildinfo

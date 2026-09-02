@@ -35,9 +35,9 @@
 
 > **Provenance:** PiWin Studio is a Windows/WSL2 adaptation derived from [Bivor](https://github.com/ryanlab/bivor), Copyright (c) 2026 ryanlab, under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-**PiWin Studio** is a desktop workbench based on the [Pi Agent Harness](https://github.com/earendil-works/pi). It preserves Bivor's Electron/Pi SDK foundation while adding Windows packaging, PowerShell execution compatibility, Docker-restricted command execution, and an audit layer.
+**PiWin Studio** is a desktop workbench based on the [Pi Agent Harness](https://github.com/earendil-works/pi). It preserves Bivor's Electron/Pi SDK foundation while adding Windows packaging, PowerShell execution compatibility, Docker-restricted command execution, structural Bash guardrails, and recoverable Git-task review controls.
 
-The Windows slice provides an NSIS build target, PowerShell as the local terminal and one-shot command runner, standard Windows Chrome/Edge discovery, and an explicit Docker tool profile with default-deny networking, resource limits, unified first-party file-tool routing, and private task-copy patch import. WSL2 containment and durable multi-agent recovery are tracked in [docs/windows-port.md](docs/windows-port.md).
+The Windows slice provides an NSIS build target, PowerShell as the local terminal and one-shot command runner, standard Windows Chrome/Edge discovery, and an explicit Docker tool profile with default-deny networking, resource limits, unified first-party file-tool routing, and private task-copy patch import. Reviewed task checkpoints and a conservative merge queue survive app restarts; WSL2 containment is tracked in [docs/windows-port.md](docs/windows-port.md).
 
 Each chat runs the pi SDK (`AgentSessionRuntime`) inside its own isolated Electron utility process. Sessions, auth, skills, prompts, and MCP config are fully shared with the pi CLI under `~/.pi/agent/`, so you can move between the terminal and the desktop app freely.
 
@@ -47,6 +47,7 @@ Each chat runs the pi SDK (`AgentSessionRuntime`) inside its own isolated Electr
 
 - **Parallel tasks** — every chat lives in its own utility process: crash-isolated, independently abortable
 - **Guarded Git worktree tasks** — a clean primary checkout creates a `piwin/task/*` branch; PiWin freezes a review snapshot before an explicit human-confirmed merge, and refuses a moved target or post-review mutation
+- **Recoverable review queue** — each individually approved task snapshot is persisted locally; non-overlapping snapshots merge in order, while a changed target, dirty primary checkout, overlapping files, or Git failure pauses the queue before an unsafe merge
 - **Private writable Docker tasks** — Docker commands write only to a task-specific volume; PiWin previews, validates, and human-confirms a patch import into the guarded worktree before review
 - **Session tree & forking** — visual history tree; fork from any message (full history kept in the same file, switch branches anytime); "edit & fork" any user message; abandoned branches can carry an LLM-generated summary into the new branch
 - **Streaming UI** — collapsible thinking blocks, streaming Markdown with dual-theme shiki highlighting, cursor animation

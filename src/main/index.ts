@@ -106,10 +106,13 @@ import {
   listBranches,
   listWorktrees,
   mergeWorktree,
+  queueWorktreeMerge,
   prepareDockerTaskWorkspaceForChat,
   prepareWorktreeReview,
   previewDockerTaskPatch,
   removeWorktree,
+  restoreWorktreeCheckpoint,
+  unqueueWorktreeMerge,
   worktreeStatus,
 } from "./worktrees";
 import {
@@ -411,6 +414,21 @@ function registerIpc(): void {
     IPC.worktreeMerge,
     (_e, path: string, wt: string, branch: string, taskId: string, message?: string) =>
       mergeWorktree(path, wt, branch, taskId, message),
+  );
+  ipcMain.handle(
+    IPC.worktreeQueue,
+    (_e, path: string, wt: string, branch: string, taskId: string, message?: string) =>
+      queueWorktreeMerge(path, wt, branch, taskId, message),
+  );
+  ipcMain.handle(
+    IPC.worktreeUnqueue,
+    (_e, path: string, wt: string, branch: string, taskId: string) =>
+      unqueueWorktreeMerge(path, wt, branch, taskId),
+  );
+  ipcMain.handle(
+    IPC.worktreeRestoreCheckpoint,
+    (_e, path: string, wt: string, branch: string, taskId: string, checkpointId: string, confirmed: boolean) =>
+      restoreWorktreeCheckpoint(path, wt, branch, taskId, checkpointId, confirmed),
   );
   ipcMain.handle(
     IPC.worktreeDiscard,

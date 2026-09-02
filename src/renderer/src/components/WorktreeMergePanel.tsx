@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Download, GitBranch, GitMerge, Loader2, ShieldCheck, Trash2 } from "lucide-react";
+import { Check, Download, GitBranch, GitMerge, ListOrdered, Loader2, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import type { DockerTaskPatchPreview, WorktreeMergeResult, WorktreeStatusInfo } from "@shared/protocol";
 import { useAppStore, type ChatState } from "@/stores/app-store";
 import { cn } from "@/lib/cn";
@@ -18,6 +18,8 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [queueing, setQueueing] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [result, setResult] = useState<WorktreeMergeResult | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [dockerBusy, setDockerBusy] = useState(false);
@@ -91,6 +93,78 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
       setError((e as Error).message);
     } finally {
       setMerging(false);
+    }
+  };
+
+  const doQueue = async (): Promise<void> => {
+    if (!wt.taskId) {
+      setError(t("worktree.legacyTask"));
+      return;
+    }
+    if (!window.confirm(t("worktree.queueConfirm", { branch: status?.mainBranch ?? "main" }))) return;
+    setQueueing(true);
+    setError(null);
+    try {
+      const next = await window.pi.worktrees.queue(wt.projectPath, chat.cwd, wt.branch, wt.taskId);
+      if (!next.queued) {
+        setError(next.error ?? t("worktree.queueFailed"));
+        return;
+      }
+      setStatus(await window.pi.worktrees.status(wt.projectPath, chat.cwd, wt.branch, wt.taskId));
+      if (next.blocked) setError(next.blocked.reason);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setQueueing(false);
+    }
+  };
+
+  const doUnqueue = async (): Promise<void> => {
+    if (!wt.taskId) return;
+    setQueueing(true);
+    setError(null);
+    try {
+      setStatus(await window.pi.worktrees.unqueue(wt.projectPath, chat.cwd, wt.branch, wt.taskId));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setQueueing(false);
+    }
+  };
+
+  const doRestoreCheckpoint = async (): Promise<void> => {
+    if (!wt.taskId || !status?.task?.recovery.latest) return;
+    setRecovering(true);
+    setError(null);
+    try {
+      let next = await window.pi.worktrees.restoreCheckpoint(
+        wt.projectPath,
+        chat.cwd,
+        wt.branch,
+        wt.taskId,
+        status.task.recovery.latest.id,
+        false,
+      );
+      if (next.requiresConfirmation) {
+        if (!window.confirm(t("worktree.restoreCheckpointConfirm"))) return;
+        next = await window.pi.worktrees.restoreCheckpoint(
+          wt.projectPath,
+          chat.cwd,
+          wt.branch,
+          wt.taskId,
+          status.task.recovery.latest.id,
+          true,
+        );
+      }
+      if (!next.restored) {
+        setError(next.error ?? t("worktree.restoreCheckpointFailed"));
+        return;
+      }
+      setStatus(await window.pi.worktrees.status(wt.projectPath, chat.cwd, wt.branch, wt.taskId));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRecovering(false);
     }
   };
 
@@ -200,6 +274,7 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
   const changedAfterReview = task?.taskChangedAfterReview ?? false;
   const targetMoved = task?.targetAdvanced || task?.targetBranchChanged;
   const reviewReady = task?.state === "review_ready" && !changedAfterReview;
+  const queued = task?.state === "merge_queued";
   const canMerge = reviewReady && !targetMoved && !chat.isStreaming;
   const dockerCopyReady = dockerPatch?.state === "ready";
 
@@ -247,10 +322,33 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
                 <div className="mb-2 rounded-lg border border-border bg-bg px-2 py-1.5 text-[10.5px] leading-relaxed text-fg-muted">
                   <div className="flex items-center gap-1 text-fg-secondary">
                     <ShieldCheck size={11} className="text-accent" />
-                    {task.state === "review_ready" ? t("worktree.reviewReady") : t("worktree.reviewRequired")}
+                    {task.state === "review_ready"
+                      ? t("worktree.reviewReady")
+                      : task.state === "merge_queued"
+                        ? t("worktree.queued")
+                        : task.state === "merged"
+                          ? t("worktree.taskMerged")
+                          : t("worktree.reviewRequired")}
                   </div>
                   {targetMoved && <div className="pt-1 text-warning">{t("worktree.targetMoved")}</div>}
                   {changedAfterReview && <div className="pt-1 text-warning">{t("worktree.changedAfterReview")}</div>}
+                  {task.queue && (
+                    <div className="pt-1">
+                      {t("worktree.queuePosition", { n: task.queue.position })}
+                      {task.queue.blockedReason && <span className="text-warning"> · {t("worktree.queuePaused")}</span>}
+                    </div>
+                  )}
+                  {changedAfterReview && task.recovery.latest && (
+                    <button
+                      type="button"
+                      disabled={recovering || chat.isStreaming}
+                      onClick={() => void doRestoreCheckpoint()}
+                      className="mt-1.5 inline-flex items-center gap-1 text-accent hover:underline disabled:opacity-40"
+                    >
+                      {recovering ? <Loader2 size={10} className="animate-spin" /> : <RotateCcw size={10} />}
+                      {t("worktree.restoreCheckpoint")}
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -312,15 +410,37 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
               {pending === 0 && !task ? (
                 <div className="py-1 text-[11.5px] text-fg-muted">{t("worktree.noNeed")}</div>
               ) : reviewReady ? (
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    disabled={!canMerge || merging}
+                    onClick={() => void doMerge()}
+                    title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
+                  >
+                    {merging ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />}
+                    {t("worktree.mergeTo", { branch: status.mainBranch })}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={queueing || chat.isStreaming}
+                    onClick={() => void doQueue()}
+                    title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[11px] text-fg-secondary transition-colors hover:border-accent/50 hover:text-accent disabled:opacity-40"
+                  >
+                    {queueing ? <Loader2 size={11} className="animate-spin" /> : <ListOrdered size={11} />}
+                    {targetMoved ? t("worktree.queueAfterTargetMoved") : t("worktree.queueMerge")}
+                  </button>
+                </div>
+              ) : queued ? (
                 <button
                   type="button"
-                  disabled={!canMerge || merging}
-                  onClick={() => void doMerge()}
-                  title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-40"
+                  disabled={queueing || chat.isStreaming}
+                  onClick={() => void doUnqueue()}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs text-fg-secondary transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
                 >
-                  {merging ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />}
-                  {t("worktree.mergeTo", { branch: status.mainBranch })}
+                  {queueing ? <Loader2 size={12} className="animate-spin" /> : <ListOrdered size={12} />}
+                  {t("worktree.unqueue")}
                 </button>
               ) : task && !dockerCopyReady ? (
                 <button

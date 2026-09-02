@@ -17,9 +17,13 @@ import type {
   DockerTaskPatchImportResult,
   DockerTaskPatchPreview,
   DockerTaskWorkspaceState,
+  WorktreeCheckpointKind,
+  WorktreeCheckpointRestoreResult,
   WorktreeDiscardResult,
   WorktreeMergeResult,
+  WorktreeQueueResult,
   WorktreeStatusInfo,
+  WorktreeTaskCheckpoint,
   WorktreeTaskRef,
   WorktreeTaskState,
 } from "@shared/protocol";
@@ -28,7 +32,7 @@ import { dockerFilteredWorkspaceCopyCommand } from "../host/docker-credential-po
 
 const exec = promisify(execFile);
 const TASKS_FILE = "piwin-tasks.json";
-const TASKS_SCHEMA_VERSION = 1;
+const TASKS_SCHEMA_VERSION = 2;
 const DOCKER_PRIVATE_VOLUME_PREFIX = "piwin-task-";
 const DOCKER_PRIVATE_BASE_REF = "refs/piwin/private-base";
 
@@ -55,13 +59,29 @@ interface PersistedTask {
   reviewedAt?: string;
   reviewCommit?: string;
   mergedAt?: string;
+  mergedCommit?: string;
   discardedAt?: string;
+  /** The review/queue snapshots needed to resume a task after a host crash. */
+  checkpoints?: WorktreeTaskCheckpoint[];
+  queuedAt?: string;
+  queueBlocked?: {
+    reason: string;
+    conflictingFiles?: string[];
+    checkedAt: string;
+  };
   dockerWorkspace?: DockerTaskWorkspaceRecord;
+}
+
+interface MergeQueueEntry {
+  taskId: string;
+  queuedAt: string;
+  message?: string;
 }
 
 interface TaskStore {
   version: number;
   tasks: PersistedTask[];
+  mergeQueue: MergeQueueEntry[];
 }
 
 export interface WorktreeInfo {
@@ -168,13 +188,22 @@ async function readTaskStore(root: string): Promise<TaskStore> {
   try {
     const raw = await readFile(await taskStorePath(root), "utf8");
     const parsed = JSON.parse(raw) as Partial<TaskStore>;
-    if (parsed.version !== TASKS_SCHEMA_VERSION || !Array.isArray(parsed.tasks)) {
+    // Version 1 had no queue/checkpoint fields. Upgrade it in memory and write
+    // the new shape only after the next normal task-state mutation.
+    if ((parsed.version !== 1 && parsed.version !== TASKS_SCHEMA_VERSION) || !Array.isArray(parsed.tasks)) {
       throw new Error("unsupported task metadata");
     }
-    return { version: TASKS_SCHEMA_VERSION, tasks: parsed.tasks as PersistedTask[] };
+    return {
+      version: TASKS_SCHEMA_VERSION,
+      tasks: (parsed.tasks as PersistedTask[]).map((task) => ({
+        ...task,
+        checkpoints: task.checkpoints ?? [],
+      })),
+      mergeQueue: Array.isArray(parsed.mergeQueue) ? parsed.mergeQueue : [],
+    };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return { version: TASKS_SCHEMA_VERSION, tasks: [] };
+    if (code === "ENOENT") return { version: TASKS_SCHEMA_VERSION, tasks: [], mergeQueue: [] };
     // Do not silently overwrite malformed metadata: it is part of the audit trail.
     throw new Error("PiWin 任务元数据无法读取；请先备份 .git/piwin-tasks.json 后再重试");
   }
@@ -195,6 +224,7 @@ function toTaskRef(task: PersistedTask): WorktreeTaskRef {
     projectPath: task.root,
     baseCommit: task.baseCommit,
     state: task.state,
+    checkpointCount: task.checkpoints?.length ?? 0,
   };
 }
 
@@ -272,6 +302,29 @@ async function updateTask(root: string, taskId: string, patch: Partial<Persisted
   store.tasks[index] = task;
   await writeTaskStore(root, store);
   return task;
+}
+
+async function appendTaskCheckpoint(
+  root: string,
+  task: PersistedTask,
+  kind: WorktreeCheckpointKind,
+  commit: string,
+  targetCommit: string,
+): Promise<PersistedTask> {
+  const checkpoint: WorktreeTaskCheckpoint = {
+    id: randomUUID(),
+    kind,
+    commit,
+    targetCommit,
+    createdAt: new Date().toISOString(),
+  };
+  return updateTask(root, task.id, {
+    checkpoints: [...(task.checkpoints ?? []), checkpoint],
+  });
+}
+
+function latestCheckpoint(task: PersistedTask): WorktreeTaskCheckpoint | undefined {
+  return task.checkpoints?.at(-1);
 }
 
 function dockerVolumeName(task: PersistedTask): string {
@@ -758,6 +811,13 @@ export async function createWorktree(
       targetCommit,
       state: "active",
       createdAt: new Date().toISOString(),
+      checkpoints: [{
+        id: randomUUID(),
+        kind: "created",
+        commit: baseCommit,
+        targetCommit,
+        createdAt: new Date().toISOString(),
+      }],
     };
     try {
       const store = await readTaskStore(root);
@@ -873,6 +933,8 @@ export async function worktreeStatus(
   if (!task) return { mainBranch, dirtyFiles, ahead, changedFiles };
 
   const taskHead = await git(worktreePath, "rev-parse", "HEAD");
+  const queue = await readTaskStore(root);
+  const queueIndex = queue.mergeQueue.findIndex((entry) => entry.taskId === task.id);
   return {
     mainBranch,
     dirtyFiles,
@@ -885,8 +947,20 @@ export async function worktreeStatus(
       targetAdvanced: mainHead !== task.targetCommit || Boolean(mainStatus),
       targetBranchChanged: mainBranch !== task.targetBranch,
       taskChangedAfterReview:
-        task.state === "review_ready" &&
+        (task.state === "review_ready" || task.state === "merge_queued") &&
         (Boolean(status) || !task.reviewCommit || task.reviewCommit !== taskHead),
+      queue: queueIndex >= 0 && task.queuedAt
+        ? {
+            position: queueIndex + 1,
+            queuedAt: task.queuedAt,
+            blockedReason: task.queueBlocked?.reason,
+            conflictingFiles: task.queueBlocked?.conflictingFiles,
+          }
+        : undefined,
+      recovery: {
+        checkpointCount: task.checkpoints?.length ?? 0,
+        latest: latestCheckpoint(task),
+      },
     },
   };
 }
@@ -908,11 +982,14 @@ export async function prepareWorktreeReview(
   }
   await commitTaskSnapshot(worktreePath, branch, task.id);
   const reviewCommit = await git(worktreePath, "rev-parse", "HEAD");
-  await updateTask(root, task.id, {
+  const reviewedTask = await updateTask(root, task.id, {
     state: "review_ready",
     reviewedAt: new Date().toISOString(),
     reviewCommit,
+    queuedAt: undefined,
+    queueBlocked: undefined,
   });
+  await appendTaskCheckpoint(root, reviewedTask, "review", reviewCommit, task.targetCommit);
   return worktreeStatus(root, worktreePath, branch, task.id);
 }
 
@@ -928,6 +1005,16 @@ export async function mergeWorktree(
   message?: string,
 ): Promise<WorktreeMergeResult> {
   const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, () => mergeWorktreeAtRoot(root, worktreePath, branch, taskId, message));
+}
+
+async function mergeWorktreeAtRoot(
+  root: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  message?: string,
+): Promise<WorktreeMergeResult> {
   const task = await requireTask(root, worktreePath, branch, taskId);
   const mainBranch = (await git(root, "branch", "--show-current")) || "HEAD";
   if (task.state !== "review_ready") {
@@ -965,12 +1052,23 @@ export async function mergeWorktree(
   }
   const mergedCommits = Number(await git(root, "rev-list", "--count", `${mainBranch}..${branch}`).catch(() => "0"));
   if (mergedCommits === 0) {
-    await updateTask(root, task.id, { state: "merged", mergedAt: new Date().toISOString() });
+    const mergedTask = await updateTask(root, task.id, {
+      state: "merged",
+      mergedAt: new Date().toISOString(),
+      mergedCommit: mainHead,
+    });
+    await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mainHead);
     return { merged: true, mainBranch, mergedCommits: 0 };
   }
   try {
     await git(root, "merge", "--no-ff", branch, "-m", message || `Merge PiWin task ${branch}`);
-    await updateTask(root, task.id, { state: "merged", mergedAt: new Date().toISOString() });
+    const mergedHead = await git(root, "rev-parse", "HEAD");
+    const mergedTask = await updateTask(root, task.id, {
+      state: "merged",
+      mergedAt: new Date().toISOString(),
+      mergedCommit: mergedHead,
+    });
+    await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mergedHead);
     return { merged: true, mainBranch, mergedCommits };
   } catch (error) {
     try {
@@ -988,6 +1086,335 @@ export async function mergeWorktree(
   }
 }
 
+interface QueueBlocker {
+  taskId: string;
+  branch: string;
+  reason: string;
+  conflictingFiles?: string[];
+}
+
+interface QueueDrainResult {
+  mergedTaskIds: string[];
+  blocked?: QueueBlocker;
+}
+
+const mergeQueueTails = new Map<string, Promise<void>>();
+
+/** Serialize queue updates per repository so two windows cannot merge at once. */
+async function withMergeQueueLock<T>(root: string, work: () => Promise<T>): Promise<T> {
+  const previous = mergeQueueTails.get(root) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolveGate) => {
+    release = resolveGate;
+  });
+  const tail = previous.then(() => gate);
+  mergeQueueTails.set(root, tail);
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release?.();
+    if (mergeQueueTails.get(root) === tail) mergeQueueTails.delete(root);
+  }
+}
+
+async function isAncestor(root: string, older: string, newer: string): Promise<boolean> {
+  try {
+    await git(root, "merge-base", "--is-ancestor", older, newer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function changedFilesBetween(root: string, older: string, newer: string): Promise<string[]> {
+  if (older === newer) return [];
+  const changed = await git(root, "diff", "--name-only", "--diff-filter=ACDMRT", older, newer);
+  return changed.split("\n").filter(Boolean);
+}
+
+async function taskReviewIsStable(task: PersistedTask): Promise<string | undefined> {
+  if (!task.reviewCommit) return "任务缺少审核快照；请重新准备审核。";
+  if (task.dockerWorkspace?.state === "ready") return "Docker 私有副本尚未导入或丢弃。";
+  const [dirty, head] = await Promise.all([
+    git(task.worktreePath, "status", "--porcelain", "--untracked-files=all"),
+    git(task.worktreePath, "rev-parse", "HEAD"),
+  ]);
+  if (dirty || head !== task.reviewCommit) return "任务在审核快照后发生变化；请重新准备审核。";
+  return undefined;
+}
+
+async function queueBlock(
+  root: string,
+  task: PersistedTask,
+  reason: string,
+  conflictingFiles?: string[],
+): Promise<QueueBlocker> {
+  await updateTask(root, task.id, {
+    queueBlocked: {
+      reason,
+      conflictingFiles: conflictingFiles?.slice(0, 64),
+      checkedAt: new Date().toISOString(),
+    },
+  });
+  return { taskId: task.id, branch: task.branch, reason, conflictingFiles };
+}
+
+async function mergeQueuedTask(root: string, task: PersistedTask, entry: MergeQueueEntry): Promise<
+  { merged: true } | { merged: false; blocked: QueueBlocker }
+> {
+  const mainBranch = (await git(root, "branch", "--show-current")) || "HEAD";
+  if (mainBranch !== task.targetBranch) {
+    return { merged: false, blocked: await queueBlock(root, task, `主工作区当前为 ${mainBranch}，任务目标为 ${task.targetBranch}`) };
+  }
+  try {
+    await assertCleanPrimary(root);
+  } catch (error) {
+    return { merged: false, blocked: await queueBlock(root, task, (error as Error).message) };
+  }
+  const stableReason = await taskReviewIsStable(task);
+  if (stableReason) return { merged: false, blocked: await queueBlock(root, task, stableReason) };
+
+  const mainHead = await git(root, "rev-parse", "HEAD");
+  if (!(await isAncestor(root, task.targetCommit, mainHead))) {
+    return {
+      merged: false,
+      blocked: await queueBlock(root, task, "主分支历史已重写，无法安全重放排队任务。请人工处理后重新审核。"),
+    };
+  }
+  if (!task.reviewCommit) {
+    return { merged: false, blocked: await queueBlock(root, task, "任务缺少审核快照；请重新准备审核。") };
+  }
+
+  const [taskFiles, advancedFiles] = await Promise.all([
+    changedFilesBetween(root, task.targetCommit, task.reviewCommit),
+    changedFilesBetween(root, task.targetCommit, mainHead),
+  ]);
+  const advanced = new Set(advancedFiles);
+  const conflicts = taskFiles.filter((file) => advanced.has(file));
+  if (conflicts.length > 0 && !(await isAncestor(root, task.reviewCommit, mainHead))) {
+    return {
+      merged: false,
+      blocked: await queueBlock(
+        root,
+        task,
+        `与主分支之后的改动存在 ${conflicts.length} 个文件重叠，队列已暂停，未尝试合并。`,
+        conflicts,
+      ),
+    };
+  }
+
+  const commits = Number(await git(root, "rev-list", "--count", `${mainHead}..${task.branch}`).catch(() => "0"));
+  let mergedHead = mainHead;
+  if (commits > 0) {
+    try {
+      await git(root, "merge", "--no-ff", "--no-commit", task.branch);
+      await exec("git", ["commit", "-m", entry.message || `Merge queued PiWin task ${task.branch}`], {
+        cwd: root,
+        timeout: 30000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: taskCommitEnv(),
+      });
+      mergedHead = await git(root, "rev-parse", "HEAD");
+    } catch (error) {
+      try {
+        await git(root, "merge", "--abort");
+      } catch {
+        // No merge was in progress, or Git already cleaned it up.
+      }
+      return {
+        merged: false,
+        blocked: await queueBlock(
+          root,
+          task,
+          `Git 合并失败，已回退：${compactCommandError(error)}`,
+        ),
+      };
+    }
+  }
+
+  const mergedTask = await updateTask(root, task.id, {
+    state: "merged",
+    mergedAt: new Date().toISOString(),
+    mergedCommit: mergedHead,
+    queuedAt: undefined,
+    queueBlocked: undefined,
+  });
+  await appendTaskCheckpoint(root, mergedTask, "merged", task.reviewCommit, mergedHead);
+  return { merged: true };
+}
+
+async function drainMergeQueue(root: string): Promise<QueueDrainResult> {
+  const mergedTaskIds: string[] = [];
+  for (;;) {
+    const store = await readTaskStore(root);
+    const entry = store.mergeQueue[0];
+    if (!entry) return { mergedTaskIds };
+    const task = store.tasks.find((candidate) => candidate.id === entry.taskId);
+    if (!task || task.state !== "merge_queued") {
+      store.mergeQueue = store.mergeQueue.filter((candidate) => candidate.taskId !== entry.taskId);
+      await writeTaskStore(root, store);
+      continue;
+    }
+    const outcome = await mergeQueuedTask(root, task, entry);
+    if (!outcome.merged) return { mergedTaskIds, blocked: outcome.blocked };
+    const updated = await readTaskStore(root);
+    updated.mergeQueue = updated.mergeQueue.filter((candidate) => candidate.taskId !== task.id);
+    await writeTaskStore(root, updated);
+    mergedTaskIds.push(task.id);
+  }
+}
+
+/**
+ * Persist an explicitly approved review snapshot in the per-repository merge
+ * queue, then drain only the safe prefix. Every queued task was individually
+ * confirmed in the UI; overlapping paths or a Git conflict pause the queue.
+ */
+export async function queueWorktreeMerge(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  message?: string,
+): Promise<WorktreeQueueResult> {
+  const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, async () => {
+    const task = await requireTask(root, worktreePath, branch, taskId);
+    if (task.state === "merged") {
+      return { queued: false, mergedTaskIds: [], error: "此任务已经合并。" };
+    }
+    if (task.state === "discarded") {
+      return { queued: false, mergedTaskIds: [], error: "此任务已经丢弃。" };
+    }
+    if (task.state !== "review_ready" && task.state !== "merge_queued") {
+      return { queued: false, mergedTaskIds: [], error: "请先将任务标记为“准备审核”。" };
+    }
+    const stableReason = await taskReviewIsStable(task);
+    if (stableReason) return { queued: false, mergedTaskIds: [], error: stableReason };
+
+    let position = 0;
+    if (task.state !== "merge_queued") {
+      const store = await readTaskStore(root);
+      const now = new Date().toISOString();
+      const checkpoint: WorktreeTaskCheckpoint = {
+        id: randomUUID(),
+        kind: "queued",
+        commit: task.reviewCommit!,
+        targetCommit: task.targetCommit,
+        createdAt: now,
+      };
+      const index = store.tasks.findIndex((candidate) => candidate.id === task.id);
+      if (index < 0) return { queued: false, mergedTaskIds: [], error: "PiWin 任务元数据不存在。" };
+      store.tasks[index] = {
+        ...store.tasks[index],
+        state: "merge_queued",
+        queuedAt: now,
+        queueBlocked: undefined,
+        checkpoints: [...(store.tasks[index].checkpoints ?? []), checkpoint],
+      };
+      store.mergeQueue.push({ taskId: task.id, queuedAt: now, message });
+      position = store.mergeQueue.length;
+      await writeTaskStore(root, store);
+    } else {
+      const store = await readTaskStore(root);
+      position = store.mergeQueue.findIndex((entry) => entry.taskId === task.id) + 1;
+    }
+
+    const drained = await drainMergeQueue(root);
+    return {
+      queued: true,
+      position: position || undefined,
+      mergedTaskIds: drained.mergedTaskIds,
+      blocked: drained.blocked,
+    };
+  });
+}
+
+/** Remove a waiting snapshot from the queue without changing its review commit. */
+export async function unqueueWorktreeMerge(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+): Promise<WorktreeStatusInfo> {
+  const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, async () => {
+    const task = await requireTask(root, worktreePath, branch, taskId);
+    if (task.state !== "merge_queued") return worktreeStatus(root, worktreePath, branch, taskId);
+    const store = await readTaskStore(root);
+    const index = store.tasks.findIndex((candidate) => candidate.id === task.id);
+    if (index < 0) throw new Error("PiWin 任务元数据不存在");
+    store.tasks[index] = {
+      ...store.tasks[index],
+      state: "review_ready",
+      queuedAt: undefined,
+      queueBlocked: undefined,
+    };
+    store.mergeQueue = store.mergeQueue.filter((entry) => entry.taskId !== task.id);
+    await writeTaskStore(root, store);
+    return worktreeStatus(root, worktreePath, branch, taskId);
+  });
+}
+
+/** Restore a durable task Git checkpoint only after an explicit UI confirmation. */
+export async function restoreWorktreeCheckpoint(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  checkpointId: string,
+  confirmed: boolean,
+): Promise<WorktreeCheckpointRestoreResult> {
+  const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, async () => {
+    const task = await requireTask(root, worktreePath, branch, taskId);
+    const checkpoint = task.checkpoints?.find((candidate) => candidate.id === checkpointId);
+    if (!checkpoint) return { restored: false, requiresConfirmation: false, error: "找不到该任务 checkpoint。" };
+    if (task.state === "merged" || task.state === "discarded") {
+      return { restored: false, requiresConfirmation: false, checkpoint, error: "已完成的任务不能恢复到旧 checkpoint。" };
+    }
+    if (task.dockerWorkspace?.state === "ready") {
+      return { restored: false, requiresConfirmation: false, checkpoint, error: "请先导入或丢弃 Docker 私有副本。" };
+    }
+    try {
+      await git(worktreePath, "cat-file", "-e", `${checkpoint.commit}^{commit}`);
+    } catch {
+      return { restored: false, requiresConfirmation: false, checkpoint, error: "checkpoint Git 提交已不可用。" };
+    }
+    if (!confirmed) return { restored: false, requiresConfirmation: true, checkpoint };
+
+    try {
+      await git(worktreePath, "reset", "--hard", checkpoint.commit);
+      // The confirmation explicitly discards post-checkpoint work. `reset`
+      // does not remove untracked files, so clean them as well to make the
+      // recovered worktree match its durable checkpoint.
+      await git(worktreePath, "clean", "-fd");
+      const nextState: WorktreeTaskState = checkpoint.kind === "created" ? "active" : "review_ready";
+      const store = await readTaskStore(root);
+      const index = store.tasks.findIndex((candidate) => candidate.id === task.id);
+      if (index < 0) throw new Error("PiWin 任务元数据不存在");
+      store.tasks[index] = {
+        ...store.tasks[index],
+        state: nextState,
+        reviewCommit: checkpoint.kind === "created" ? undefined : checkpoint.commit,
+        reviewedAt: checkpoint.kind === "created" ? undefined : checkpoint.createdAt,
+        queuedAt: undefined,
+        queueBlocked: undefined,
+      };
+      store.mergeQueue = store.mergeQueue.filter((entry) => entry.taskId !== task.id);
+      await writeTaskStore(root, store);
+      return { restored: true, requiresConfirmation: false, checkpoint };
+    } catch (error) {
+      return {
+        restored: false,
+        requiresConfirmation: false,
+        checkpoint,
+        error: `checkpoint 恢复失败：${compactCommandError(error)}`,
+      };
+    }
+  });
+}
+
 /** Delete a task only after the caller has made an explicit discard decision. */
 export async function discardTask(
   projectPath: string,
@@ -997,6 +1424,16 @@ export async function discardTask(
   confirmed: boolean,
 ): Promise<WorktreeDiscardResult> {
   const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, () => discardTaskAtRoot(root, worktreePath, branch, taskId, confirmed));
+}
+
+async function discardTaskAtRoot(
+  root: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  confirmed: boolean,
+): Promise<WorktreeDiscardResult> {
   const task = await requireTask(root, worktreePath, branch, taskId);
   const status = await worktreeStatus(root, worktreePath, branch, task.id);
   let privateChanges = false;
@@ -1031,7 +1468,19 @@ export async function discardTask(
     }
     await git(root, "worktree", "remove", "--force", task.worktreePath);
     await git(root, "branch", "-D", task.branch);
-    await updateTask(root, task.id, { state: "discarded", discardedAt: now, dockerWorkspace });
+    const store = await readTaskStore(root);
+    const index = store.tasks.findIndex((candidate) => candidate.id === task.id);
+    if (index < 0) throw new Error("PiWin 任务元数据不存在");
+    store.tasks[index] = {
+      ...store.tasks[index],
+      state: "discarded",
+      discardedAt: now,
+      dockerWorkspace,
+      queuedAt: undefined,
+      queueBlocked: undefined,
+    };
+    store.mergeQueue = store.mergeQueue.filter((entry) => entry.taskId !== task.id);
+    await writeTaskStore(root, store);
     return {
       discarded: true,
       requiresConfirmation: false,

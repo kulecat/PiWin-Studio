@@ -30,6 +30,8 @@ import type {
   SessionSearchHit,
   UsageStats,
   WorktreeMergeResult,
+  WorktreeQueueResult,
+  WorktreeCheckpointRestoreResult,
   WorktreeDiscardResult,
   WorktreeStatusInfo,
   WorktreeTaskRef,
@@ -277,6 +279,25 @@ const api = {
       message?: string,
     ): Promise<WorktreeMergeResult> =>
       ipcRenderer.invoke(IPC.worktreeMerge, path, wt, branch, taskId, message),
+    queue: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      message?: string,
+    ): Promise<WorktreeQueueResult> =>
+      ipcRenderer.invoke(IPC.worktreeQueue, path, wt, branch, taskId, message),
+    unqueue: (path: string, wt: string, branch: string, taskId: string): Promise<WorktreeStatusInfo> =>
+      ipcRenderer.invoke(IPC.worktreeUnqueue, path, wt, branch, taskId),
+    restoreCheckpoint: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      checkpointId: string,
+      confirmed: boolean,
+    ): Promise<WorktreeCheckpointRestoreResult> =>
+      ipcRenderer.invoke(IPC.worktreeRestoreCheckpoint, path, wt, branch, taskId, checkpointId, confirmed),
     discard: (
       path: string,
       wt: string,

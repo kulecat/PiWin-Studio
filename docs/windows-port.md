@@ -159,6 +159,29 @@ The lifecycle is deliberately explicit:
 4. **Discard** — deleting a task containing changes requires a separate explicit
    confirmation. The task branch and its worktree are then removed together.
 
+### Recoverable review queue
+
+Task metadata uses a versioned, local-only `piwin-tasks.json` record in the
+repository's Git common directory. PiWin stores durable **created**, **review**,
+**queued**, and **merged** commit checkpoints there, so Mission Control can
+reopen an orphaned task after an app restart.
+
+After the user confirms each task separately, **Add to merge queue** persists
+its exact review commit. The queue only drains a safe prefix: the primary
+checkout must be clean and still on the target branch, the task snapshot must
+not have changed, and PiWin compares the files changed by the task with files
+changed on the target since that task began. Any overlapping path, rewritten
+history, branch mismatch, or Git merge error pauses the queue before merging;
+PiWin never guesses a conflict resolution. Safe entries use an explicit
+no-fast-forward merge commit in their recorded order.
+
+For a task changed after review, **Restore latest checkpoint** first asks for a
+separate destructive confirmation, then runs `git reset --hard` and removes
+non-ignored untracked files with `git clean -fd` in that *task worktree only*.
+It removes a queued entry and returns the task to review-ready state; it does
+not delete a Docker private volume, which must still be imported or discarded
+explicitly.
+
 ### Docker-private writable task workflow
 
 When `PIWIN_EXECUTION_RUNNER=docker` and
