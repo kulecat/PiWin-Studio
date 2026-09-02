@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { delimiter, join } from "node:path";
 import { dockerEgressInvocationArgs } from "./docker-egress";
+import { resolveDockerCredentialValues, type DockerCredentialValue } from "./docker-credential-policy";
 import type {
   DockerSandboxProfile,
   ExecutionEnvironmentPayload,
@@ -27,6 +28,8 @@ export interface PtyInvocation {
   file: string;
   args: string[];
   runner: LocalRunnerKind;
+  /** Optional docker.exe environment for one-shot approved credentials. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const RUNNER_ENV = "PIWIN_EXECUTION_RUNNER";
@@ -135,12 +138,10 @@ function privateWorkspaceVolume(): string | undefined {
  * used. Check first so an imported/discarded task cannot accidentally resume
  * in an empty replacement volume from an old host process.
  */
-function requirePrivateWorkspaceVolume(): string {
+function requireExistingWorkspaceVolume(errorMessage: string): string {
   const volume = privateWorkspaceVolume();
   if (!volume) {
-    throw new Error(
-      "Docker writable mode requires a PiWin guarded task worktree. Open a new task worktree, then start the agent there.",
-    );
+    throw new Error(errorMessage);
   }
   const checked = spawnSync("docker.exe", ["volume", "inspect", volume], {
     encoding: "utf8",
@@ -148,11 +149,21 @@ function requirePrivateWorkspaceVolume(): string {
     windowsHide: true,
   });
   if (checked.status !== 0) {
-    throw new Error(
-      "This Docker private task copy has already been imported or discarded. Prepare review, then create a new task before running more Docker commands.",
-    );
+    throw new Error(errorMessage);
   }
   return volume;
+}
+
+function requirePrivateWorkspaceVolume(): string {
+  return requireExistingWorkspaceVolume(
+    "Docker writable mode requires a PiWin guarded task worktree. Open a new task worktree, then start the agent there.",
+  );
+}
+
+function requireReadonlyCredentialSnapshotVolume(): string {
+  return requireExistingWorkspaceVolume(
+    "Docker read-only credential-safe snapshot is not ready. Restart the PiWin agent session.",
+  );
 }
 
 function probeWsl(): WslProbe {
@@ -278,11 +289,19 @@ function wslInvocation(command: string, cwd: string): PtyInvocation {
   };
 }
 
-function dockerInvocation(command: string, cwd: string): PtyInvocation {
+function dockerInvocation(
+  command: string,
+  credentials: DockerCredentialValue[] = [],
+): PtyInvocation {
   const profile = getDockerSandboxProfile();
   const workspaceMount =
     profile.workspaceAccess === "readonly"
-      ? ["type=bind", `src=${cwd}`, "dst=/workspace", "readonly"]
+      ? [
+          "type=volume",
+          `src=${requireReadonlyCredentialSnapshotVolume()}`,
+          "dst=/workspace",
+          "readonly",
+        ]
       : (() => {
           const volume = requirePrivateWorkspaceVolume();
           return ["type=volume", `src=${volume}`, "dst=/workspace"];
@@ -297,6 +316,13 @@ function dockerInvocation(command: string, cwd: string): PtyInvocation {
       "--workdir",
       "/workspace",
       ...(profile.network === "none" ? ["--network", "none"] : dockerEgressInvocationArgs()),
+      // Docker does not inherit the host environment. Only the explicit
+      // names passed by the approved credential tool are forwarded below.
+      ...credentials.flatMap(({ name }) => ["--env", name]),
+      "--env",
+      "HOME=/tmp",
+      "--env",
+      "GIT_CONFIG_NOSYSTEM=1",
       "--read-only",
       "--tmpfs",
       "/tmp:rw,nosuid,nodev,size=512m",
@@ -328,7 +354,26 @@ function dockerInvocation(command: string, cwd: string): PtyInvocation {
       command,
     ],
     runner: "docker",
+    ...(credentials.length > 0
+      ? { env: { ...process.env, ...Object.fromEntries(credentials.map(({ name, value }) => [name, value])) } }
+      : {}),
   };
+}
+
+/**
+ * Build a one-shot Docker command that receives only explicitly allowlisted,
+ * human-approved environment variables. Values are inherited by docker.exe
+ * with `--env NAME`, so secret bytes are never put in the command line.
+ */
+export function resolveDockerCredentialInvocation(
+  command: string,
+  _cwd: string,
+  credentialNames: string[],
+): PtyInvocation {
+  if (process.platform !== "win32" || configuredRunner() !== "docker") {
+    throw new Error("Temporary credential injection is available only in the Windows Docker runner.");
+  }
+  return dockerInvocation(command, resolveDockerCredentialValues(credentialNames));
 }
 
 /**
@@ -342,7 +387,7 @@ export function resolveLocalPtyInvocation(command: string, cwd: string): PtyInvo
   }
 
   const requested = configuredRunner();
-  if (requested === "docker") return dockerInvocation(command, cwd);
+  if (requested === "docker") return dockerInvocation(command);
   if (requested === "wsl") return wslInvocation(command, cwd);
   if (requested === "powershell") return powerShellInvocation(command);
 

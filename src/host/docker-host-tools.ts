@@ -22,6 +22,9 @@ const DOCKER_VOLUME_TOOL_NAMES = new Set([
   // not execute a host capability by themselves.
   "tool_search",
   "tool_activate",
+  // It has its own mandatory per-call credential approval and executes in the
+  // same private Docker workspace; it is not a host-side capability.
+  "docker_credential_exec",
 ]);
 
 export function dockerHostToolsBoundaryActive(): boolean {

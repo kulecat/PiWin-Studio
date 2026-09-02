@@ -224,6 +224,33 @@ and recoverable worktree-based agent tasks.
   internal agent network failed, and both proxy decisions appeared in the audit
   log. The test proxy container and internal network were removed afterwards.
 
+### 2026-09-02 — Docker credential isolation and one-shot approval
+
+- Added `src/host/docker-credential-policy.ts` and a read-only snapshot
+  lifecycle in `src/host/docker-credentials.ts`. Docker readonly sessions no
+  longer bind-mount the host worktree; each host creates a short-lived,
+  filtered, Git-aware volume snapshot instead. The snapshot is removed when
+  the agent host exits or initialization fails.
+- Applied the same filter to writable task-volume bootstrap in
+  `src/main/worktrees.ts`. `.env*`, package-manager and Git credential files,
+  cloud/SSH/GnuPG directories, private-key formats, and `credentials.json`
+  never enter either Docker workspace. Reinstallable dependencies and build
+  artifacts are also excluded, avoiding large per-chat copies of `node_modules`.
+- Docker containers receive no host environment variables by default. Added
+  `docker_credential_exec`: the user must configure variable *names* in
+  `PIWIN_DOCKER_CREDENTIAL_ALLOWLIST`, then approve each requested command.
+  The selected values are supplied only to that disposable command's container
+  through Docker's `--env NAME` mechanism; values are not put in command-line
+  arguments and do not persist to later calls.
+- Added redaction of known injected values in tool output and hash-chained
+  `credential_access` audit entries containing names, approval/deny/execute
+  decision and exit result only. Generic human approvals now emit the same
+  existing policy audit events as guardrail approvals.
+- Ran a real Docker smoke test with a temporary `.env` and `NPM_TOKEN`: the
+  snapshot omitted `.env`, ordinary Docker commands saw no token, the approved
+  one-shot command received it but returned `[REDACTED:NPM_TOKEN]`, audit
+  contained the name but not the value, and the temporary volume was removed.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin

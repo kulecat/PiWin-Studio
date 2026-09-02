@@ -24,6 +24,7 @@ import type {
   WorktreeTaskState,
 } from "@shared/protocol";
 import { getDockerSandboxProfile } from "../host/windows-execution";
+import { dockerFilteredWorkspaceCopyCommand } from "../host/docker-credential-policy";
 
 const exec = promisify(execFile);
 const TASKS_FILE = "piwin-tasks.json";
@@ -348,8 +349,7 @@ async function initializeDockerTaskWorkspace(task: PersistedTask, volume: string
   const sourceMount = ["type=bind", `src=${task.worktreePath}`, "dst=/source", "readonly"].join(",");
   const bootstrap = [
     "set -eu",
-    "cp -R /source/. /workspace/",
-    "rm -rf /workspace/.git",
+    dockerFilteredWorkspaceCopyCommand("/source", "/workspace"),
     "git -C /workspace init -q",
     "git -C /workspace config user.name 'PiWin Studio'",
     "git -C /workspace config user.email 'piwin@desktop.local'",

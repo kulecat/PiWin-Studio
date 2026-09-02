@@ -204,3 +204,35 @@ export function appendNetworkAudit(event: {
       active.previousHash = hash;
     });
 }
+
+/** Record a temporary Docker credential decision by variable name only. */
+export function appendCredentialAudit(event: {
+  decision: "approved" | "denied" | "executed" | "failed";
+  names: string[];
+  exitCode?: number | null;
+}): void {
+  if (!context) return;
+  const active = context;
+  writeQueue = writeQueue
+    .catch(() => {
+      // A failed prior write must not prevent a later event from being tried.
+    })
+    .then(async () => {
+      const entry = {
+        schemaVersion: 1,
+        id: randomUUID(),
+        event: "credential_access",
+        recordedAt: new Date().toISOString(),
+        sessionId: active.sessionId,
+        workspace: active.cwd,
+        decision: event.decision,
+        names: [...new Set(event.names)].slice(0, 16),
+        exitCode: event.exitCode,
+        previousHash: active.previousHash,
+      };
+      const hash = sha256(JSON.stringify(entry));
+      await mkdir(dirname(active.logPath), { recursive: true });
+      await appendFile(active.logPath, `${JSON.stringify({ ...entry, hash })}\n`, "utf8");
+      active.previousHash = hash;
+    });
+}

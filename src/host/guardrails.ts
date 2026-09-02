@@ -93,12 +93,16 @@ export function recordMandatoryToolBoundary(detail: string): void {
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** 通用人工审批原语：任何模块都可请求用户批准（复用同一张审批卡）。 */
-export function requestHumanApproval(
+export async function requestHumanApproval(
   toolName: string,
   input: Record<string, unknown>,
   rule?: string,
 ): Promise<boolean> {
-  return awaitApproval(toolName, input, rule);
+  const detail = summarizeInput(input);
+  emit("asked", toolName, detail);
+  const approved = await awaitApproval(toolName, input, rule);
+  emit(approved ? "approved" : "denied", toolName, detail);
+  return approved;
 }
 
 function awaitApproval(toolName: string, input: Record<string, unknown>, rule?: string): Promise<boolean> {

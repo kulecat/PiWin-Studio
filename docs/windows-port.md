@@ -36,8 +36,9 @@ conservative:
 
 - the container root filesystem is read-only; `/tmp`, `/var/tmp`, and the
   `node` home directory are disposable tmpfs mounts;
-- in `readonly` mode, the only host mount is the active workspace at
-  `/workspace`, mounted read-only;
+- in `readonly` mode, PiWin first creates a filtered, read-only task snapshot
+  volume at `/workspace`; it never mounts the active host workspace into the
+  command container;
 - in `readwrite` mode, there is no writable host mount: commands receive only
   a task-specific Docker volume at `/workspace`;
 - network access is disabled by default;
@@ -55,6 +56,7 @@ $env:PIWIN_EXECUTION_RUNNER = "docker"
 $env:PIWIN_DOCKER_WORKSPACE_ACCESS = "readonly" # default; readwrite needs a fresh PiWin task
 $env:PIWIN_DOCKER_NETWORK = "none"              # set allow only when needed
 $env:PIWIN_DOCKER_NETWORK_ALLOWLIST = "registry.npmjs.org,api.github.com"
+$env:PIWIN_DOCKER_CREDENTIAL_ALLOWLIST = "NPM_TOKEN,GITHUB_TOKEN"
 $env:PIWIN_DOCKER_MEMORY = "2g"
 $env:PIWIN_DOCKER_CPUS = "2"
 $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
@@ -70,7 +72,7 @@ read-only profile at the Docker boundary. `readwrite` starts a private Docker
 copy for a fresh guarded task; it never grants a container a writable host
 mount.
 The default image is `node:22-bookworm` because this workflow needs Git. A
-custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, `grep`, `find`,
+custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, `tar`, `grep`, `find`,
 `realpath`, `xargs`, and a non-root `node` user (UID 1000).
 
 ### Network allowlist proxy
@@ -96,6 +98,28 @@ decision: DNS host, port, HTTP method, allow/deny decision, fixed denial reason
 and, when available, HTTP status. It deliberately excludes URL paths, query
 strings, headers, bodies, and credentials. The proxy and its internal network
 are removed when the agent host shuts down.
+
+### Credential isolation and one-shot injection
+
+Docker never inherits the PiWin host's environment simply because it is a
+child process: every container environment variable is an explicit `docker
+run --env` argument. In addition, both the read-only snapshot and the writable
+task-volume bootstrap exclude common credential paths before the agent starts:
+`.env*`, `.npmrc`, `.netrc`, `.pypirc`, `.git-credentials`, `.aws`, `.ssh`,
+`.gnupg`, private-key formats, and `credentials.json`. Reinstallable dependency
+and build directories (`node_modules`, `.pnpm-store`, `out`, `dist`, etc.) are
+also left out, keeping snapshots fast and source-focused. PiWin creates a new
+Git baseline inside the resulting volume so Git-aware tools still work.
+
+For the uncommon case where one command truly needs a secret, put only its
+*name* in `PIWIN_DOCKER_CREDENTIAL_ALLOWLIST` before launching PiWin, for
+example `NPM_TOKEN,GITHUB_TOKEN`. The agent can then request
+`docker_credential_exec`; every request displays the command and requested
+names in an approval card. After approval, the selected variables are supplied
+only to that one disposable Docker container using `--env NAME` (the secret
+bytes are not placed in the Docker command line). Later `bash` calls do not
+retain them. Tool output redacts known injected values, and the audit records
+the variable names and decision/exit result—never values.
 
 This is a first-party **tool-execution** boundary, not a claim that all Agent
 behavior is isolated. In the default `PIWIN_DOCKER_HOST_TOOLS=deny` mode,
@@ -161,9 +185,9 @@ chat process cannot recreate a removed volume: it is stopped at the next Docker
 command, so after import the user should prepare review and then create a new
 task for additional work.
 
-This does not make an opt-in extension or MCP tool sandboxed. Credential
-isolation, transport policy beyond HTTP(S), and third-party tool routing remain
-later phases.
+This does not make an opt-in extension or MCP tool sandboxed. Transport policy
+beyond HTTP(S), credential brokers beyond one-shot environment injection, and
+third-party tool routing remain later phases.
 
 ## Execution audit log
 
@@ -176,6 +200,8 @@ command program name, command byte length, SHA-256 command fingerprint,
 timeout, duration, exit result, and a hash-chain link to the preceding entry.
 Docker allowlist decisions appear as separate `network_request` entries and
 record only host/port/method/decision metadata.
+Temporary credential injection appears as `credential_access` entries with
+variable names and decisions only.
 Raw command text is intentionally not stored because shell commands often
 contain tokens or credentials.
 
@@ -194,5 +220,5 @@ The Docker restricted tool profile is the first Windows containment layer.
 Native PowerShell and WSL2 are convenience runners and must always be visibly
 marked as host execution in the UI and audit log. Docker task-private copies
 now provide a unified first-party file and command boundary plus a
-domain-allowlisted HTTP(S) egress path; credential isolation, third-party tool
-routing, and durable recovery remain planned.
+domain-allowlisted HTTP(S) egress path and filtered credential-safe workspace;
+third-party tool routing and durable recovery remain planned.

@@ -139,9 +139,9 @@ export const zh = {
     dockerNetworkAllow: "域名白名单代理（已显式开启）",
     dockerSandboxControls: "容器根文件系统只读、移除 Linux capabilities、禁止提权、隔离 IPC，并只提供临时可写目录。",
     dockerSandboxScope:
-      "Docker 将 Pi 内置 bash/read/write/edit/grep/find/ls 路由到同一私有任务 volume，随后经人工确认导入补丁。宿主侧扩展与 MCP 工具默认不会加载；可选网络只能经域名白名单代理访问。",
+      "Docker 将 Pi 内置 bash/read/write/edit/grep/find/ls 路由到经凭据过滤的私有 volume，随后经人工确认导入补丁。宿主侧扩展与 MCP 工具默认不会加载；可选网络只能经域名白名单代理访问。",
     dockerSandboxConfig:
-      "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow；如需联网，还须设置 PIWIN_DOCKER_NETWORK_ALLOWLIST=域名1,域名2。可写模式需要一个全新的 PiWin 任务 worktree；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
+      "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow；如需联网，还须设置 PIWIN_DOCKER_NETWORK_ALLOWLIST=域名1,域名2；如需已审查的临时凭据，设置 PIWIN_DOCKER_CREDENTIAL_ALLOWLIST=NPM_TOKEN,GITHUB_TOKEN。可写模式需要一个全新的 PiWin 任务 worktree；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
     sandboxTitle: "云端虚拟机（E2B）",
     sandboxIntro:
       "每个任务可以拥有独立的云端 Linux 桌面虚拟机，执行世界切换到 VM 后，你将可以实时查看桌面与接管操作。",

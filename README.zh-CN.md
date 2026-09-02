@@ -86,7 +86,7 @@ Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命�
 - **执行世界** — 内置 bash/read/write/edit 可在本地或云端 VM 中执行(`set_execution_world`)
 - **云端 VM 沙箱(E2B)** — 完整桌面 VM,实时画面流、`vm_gui` 鼠标键盘控制、`vm_file` 文件传输、`vm_screenshot`
 - **本地沙箱** — macOS seatbelt 配置:`off` / `workspace` / `strict`
-- **受限 Docker 工具（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制；`bash/read/write/edit/grep/find/ls` 共享只读或任务私有 volume，导入补丁并人工确认后才改宿主 worktree。可选联网强制经过域名白名单代理，并逐请求写入审计记录。宿主侧扩展/MCP 默认不加载；仅允许已审查的显式启用项逐次审批并记录审计日志
+- **受限 Docker 工具（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制；`bash/read/write/edit/grep/find/ls` 共享经凭据过滤的只读或任务私有 volume，导入补丁并人工确认后才改宿主 worktree。可选联网强制经过域名白名单代理，并逐请求写入审计记录；凭据只能由用户批准后临时注入单次容器。宿主侧扩展/MCP 默认不加载；仅允许已审查的显式启用项逐次审批并记录审计日志
 - **子 agent** — `subagent_run` 最多并行 4 个(可只读或绑定 VM),Dock 实时监控
 - **浏览器** — puppeteer-core 驱动有头 Chrome/Edge,持久化用户配置
 - **Web** — Tavily 驱动的 `web_search` + 免 key 的 `web_fetch`(网页转 markdown)

@@ -77,6 +77,11 @@ import { buildWebTools } from "./web";
 import { buildBrowserTool, closeBrowser } from "./browser";
 import { buildDeployTool } from "./deploy";
 import { appendPolicyAudit, configureAuditLog } from "./audit";
+import {
+  ensureDockerReadonlyCredentialSnapshot,
+  releaseDockerReadonlyCredentialSnapshot,
+} from "./docker-credentials";
+import { buildDockerCredentialExecTool } from "./docker-credential-tool";
 import { ensureDockerEgressProxy, stopDockerEgressProxy } from "./docker-egress";
 import { getDockerSandboxProfile, isDockerHostWriteBlocked } from "./windows-execution";
 import {
@@ -609,6 +614,9 @@ async function init(msg: HostInit): Promise<void> {
   }
 
   try {
+    if (isDockerHostWriteBlocked()) {
+      await ensureDockerReadonlyCredentialSnapshot(chatId, cwd, getDockerSandboxProfile());
+    }
     if (isDockerHostWriteBlocked() && getDockerSandboxProfile().network === "allowlist") {
       await ensureDockerEgressProxy(chatId);
     }
@@ -700,6 +708,7 @@ async function init(msg: HostInit): Promise<void> {
             ...buildWebTools(),
             buildDeployTool(() => cwd),
             buildBrowserTool(),
+            ...(isDockerHostWriteBlocked() ? [buildDockerCredentialExecTool(() => cwd)] : []),
             ...buildDisclosureTools(() => session, {
               canActivate: canAgentActivateDockerTool,
               blockedMessage: (name) => ht("host.dockerHostToolActivationBlocked", { name }),
@@ -797,6 +806,7 @@ async function init(msg: HostInit): Promise<void> {
     // If setup failed after creating the optional egress runtime, do not leave
     // an idle proxy/network behind for a session that never became usable.
     await stopDockerEgressProxy();
+    await releaseDockerReadonlyCredentialSnapshot();
     send({ type: "init_error", message: err instanceof Error ? err.message : String(err) });
   }
 }
@@ -1121,6 +1131,7 @@ async function gracefulShutdown(): Promise<void> {
     await closeBrowser();
     await destroySandbox();
     await stopDockerEgressProxy();
+    await releaseDockerReadonlyCredentialSnapshot();
   } catch {
     // best effort
   }
