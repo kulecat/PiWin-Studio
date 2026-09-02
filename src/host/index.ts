@@ -42,9 +42,11 @@ import {
   createGuardrailExtension,
   guardrails,
   requestHumanApproval,
+  recordMandatoryToolBoundary,
   resolveApproval,
   setGuardrailHooks,
   setGuardrails,
+  setMandatoryToolApprovalGate,
 } from "./guardrails";
 import { abortAllSubagents, buildSubagentTool, totalSubagentCost } from "./subagents";
 import { buildMemoryTool, memorySystemPrompt } from "./memory";
@@ -75,6 +77,13 @@ import { buildWebTools } from "./web";
 import { buildBrowserTool, closeBrowser } from "./browser";
 import { buildDeployTool } from "./deploy";
 import { appendPolicyAudit, configureAuditLog } from "./audit";
+import {
+  allowExternalDockerTools,
+  canAgentActivateDockerTool,
+  dockerHostToolsBoundaryActive,
+  getDockerHostToolsMode,
+  isDockerVolumeTool,
+} from "./docker-host-tools";
 
 interface ParentPort {
   on(event: "message", listener: (e: { data: HostInbound }) => void): void;
@@ -197,6 +206,26 @@ function applyWorldToolActivation(world: "local" | "vm"): void {
 }
 
 /**
+ * Docker contains only PiWin's volume-routed core tools. Keep every other
+ * capability out of the active set by default; a person may enable a trusted
+ * one in the Tools UI, but its actual call still goes through guardrails.
+ */
+function applyDockerHostToolBoundary(s: AgentSession): string[] {
+  if (!dockerHostToolsBoundaryActive()) {
+    setMandatoryToolApprovalGate([]);
+    return [];
+  }
+  const hostTools = s
+    .getAllTools()
+    .map((tool) => tool.name)
+    .filter((name) => !isDockerVolumeTool(name));
+  const hostToolSet = new Set(hostTools);
+  s.setActiveToolsByName(s.getActiveToolNames().filter((name) => !hostToolSet.has(name)));
+  setMandatoryToolApprovalGate(hostTools, ht("host.dockerHostToolApproval"));
+  return hostTools;
+}
+
+/**
  * Strip redundant heavy payloads from streaming delta events. The renderer
  * reconstructs the partial message from deltas; full messages arrive on
  * message_start / message_end / state snapshots.
@@ -313,6 +342,7 @@ async function applyPendingHarnessChange(): Promise<void> {
       harnessState.extraSystemPrompt = change.extraSystemPrompt;
     }
     await s.reload();
+    applyDockerHostToolBoundary(s);
     send({ type: "harness", harness: serializeHarness() });
     send({ type: "state", snapshot: snapshot() });
   } catch (err) {
@@ -581,6 +611,10 @@ async function init(msg: HostInit): Promise<void> {
       const services = await createAgentSessionServices({
         cwd: args.cwd,
         resourceLoaderOptions: {
+          // In Docker's default mode do not even load resource extensions.
+          // Extension modules may execute at load time, which is earlier than
+          // the per-tool approval gate. Inline PiWin guardrails still load.
+          noExtensions: !allowExternalDockerTools(),
           skillsOverride: (base) => {
             fullSkills = base.skills;
             return {
@@ -661,7 +695,10 @@ async function init(msg: HostInit): Promise<void> {
             ...buildWebTools(),
             buildDeployTool(() => cwd),
             buildBrowserTool(),
-            ...buildDisclosureTools(() => session),
+            ...buildDisclosureTools(() => session, {
+              canActivate: canAgentActivateDockerTool,
+              blockedMessage: (name) => ht("host.dockerHostToolActivationBlocked", { name }),
+            }),
             buildCodeRunTool(),
             buildSelfTuneTool(),
             buildMemoryTool({
@@ -712,6 +749,7 @@ async function init(msg: HostInit): Promise<void> {
         commandRules: [...guardrails.commandRules, ...preset.guardrails.commandRules],
       });
     }
+    const dockerHostTools = applyDockerHostToolBoundary(session);
     trajectory = createTrajectoryRecorder({
       capture: captureAssembly,
       emit: (steps) => send({ type: "trajectory", steps }),
@@ -733,6 +771,11 @@ async function init(msg: HostInit): Promise<void> {
         }
       },
     });
+    if (dockerHostTools.length > 0) {
+      recordMandatoryToolBoundary(
+        `Docker ${getDockerHostToolsMode()} mode: ${dockerHostTools.length} host-side tools start disabled; each manually enabled call requires approval.`,
+      );
+    }
     onSandboxStatus((sb) => send({ type: "sandbox", sandbox: sb }));
     onWorldChange((world) => send({ type: "execution_world", world }));
     onLocalTermData((data) => send({ type: "local_term", data }));
@@ -1013,6 +1056,7 @@ async function handleCommand(msg: HostInbound): Promise<void> {
         harnessState.disabledExtensions = new Set(msg.disabledExtensions);
         harnessState.extraSystemPrompt = msg.extraSystemPrompt;
         await s.reload();
+        applyDockerHostToolBoundary(s);
         send({ type: "harness", harness: serializeHarness() });
         send({ type: "state", snapshot: snapshot() });
         sendCommands();
@@ -1046,6 +1090,7 @@ async function handleCommand(msg: HostInbound): Promise<void> {
       }
       setWorld(msg.world);
       applyWorldToolActivation(msg.world);
+      applyDockerHostToolBoundary(s);
       send({ type: "harness", harness: serializeHarness() });
       send({ type: "state", snapshot: snapshot() });
       break;

@@ -142,7 +142,7 @@ export const en: Messages = {
     dockerSandboxControls:
       "The container root filesystem is read-only, Linux capabilities are dropped, privilege escalation and IPC sharing are disabled, and writable paths are temporary.",
     dockerSandboxScope:
-      "Docker routes Pi's built-in bash/read/write/edit/grep/find/ls tools through one task-private volume, then imports a reviewed patch. Custom extensions and MCP tools remain host-side.",
+      "Docker routes Pi's built-in bash/read/write/edit/grep/find/ls tools through one task-private volume, then imports a reviewed patch. Host-side extensions and MCP tools are not loaded by default.",
     dockerSandboxConfig:
       "Set before launch: PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite (readonly is default), PIWIN_DOCKER_NETWORK=none|allow. Writable mode needs a fresh PiWin task worktree. PIWIN_DOCKER_MEMORY, PIWIN_DOCKER_CPUS, and PIWIN_DOCKER_PIDS_LIMIT adjust limits.",
     sandboxTitle: "Cloud VM (E2B)",
@@ -1066,6 +1066,10 @@ export const en: Messages = {
     processExit: "Agent process exited (code {code})",
     processCrash: "Host process error: {error}",
     e2bMissing: "No E2B API key configured — cannot switch to the VM execution world",
+    dockerHostToolApproval:
+      "Docker host-side tool: this call runs outside the private workspace. Approve this individual call?",
+    dockerHostToolActivationBlocked:
+      "Docker mode prevents the agent from enabling host-side tool {name}. Review and enable it manually in Tools only if you trust it.",
     systemPrompt: "System prompt",
     append: "Appended snippet",
     memory: "Memory",

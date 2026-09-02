@@ -139,7 +139,7 @@ export const zh = {
     dockerNetworkAllow: "已显式允许",
     dockerSandboxControls: "容器根文件系统只读、移除 Linux capabilities、禁止提权、隔离 IPC，并只提供临时可写目录。",
     dockerSandboxScope:
-      "Docker 将 Pi 内置 bash/read/write/edit/grep/find/ls 路由到同一私有任务 volume，随后经人工确认导入补丁。自定义扩展与 MCP 工具仍在宿主侧。",
+      "Docker 将 Pi 内置 bash/read/write/edit/grep/find/ls 路由到同一私有任务 volume，随后经人工确认导入补丁。宿主侧扩展与 MCP 工具默认不会加载。",
     dockerSandboxConfig:
       "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow。可写模式需要一个全新的 PiWin 任务 worktree；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
     sandboxTitle: "云端虚拟机（E2B）",
@@ -1059,6 +1059,10 @@ export const zh = {
     processExit: "代理进程已退出 (code {code})",
     processCrash: "宿主进程异常: {error}",
     e2bMissing: "未配置 E2B API Key，无法切换到 VM 执行世界",
+    dockerHostToolApproval:
+      "Docker 宿主侧工具：本次调用会在私有工作区之外执行。是否批准这一条调用？",
+    dockerHostToolActivationBlocked:
+      "Docker 模式禁止 agent 启用宿主侧工具 {name}。仅当你已审查并信任它时，才在「工具」中手动启用。",
     systemPrompt: "系统提示",
     append: "追加片段",
     memory: "长期记忆",

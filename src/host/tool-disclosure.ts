@@ -12,6 +12,12 @@ interface SessionLike {
   setActiveToolsByName(names: string[]): void;
 }
 
+export interface DisclosureToolOptions {
+  /** A capability boundary can prevent the model from activating a tool. */
+  canActivate?: (name: string) => boolean;
+  blockedMessage?: (name: string) => string;
+}
+
 /** 始终保留在册的核心工具：内建七件套 + 桌面自带能力。 */
 const CORE_TOOL_NAMES = new Set([
   "read",
@@ -48,7 +54,10 @@ export function applyProgressiveDisclosure(session: SessionLike, threshold: numb
   return true;
 }
 
-export function buildDisclosureTools(getSession: () => SessionLike | undefined): ToolDefinition[] {
+export function buildDisclosureTools(
+  getSession: () => SessionLike | undefined,
+  options: DisclosureToolOptions = {},
+): ToolDefinition[] {
   const search: ToolDefinition = {
     name: "tool_search",
     label: "工具搜索",
@@ -108,11 +117,17 @@ export function buildDisclosureTools(getSession: () => SessionLike | undefined):
       const requested = (params as { names: string[] }).names;
       const found = requested.filter((n) => known.has(n));
       const missing = requested.filter((n) => !known.has(n));
-      if (found.length > 0) {
-        s.setActiveToolsByName([...new Set([...s.getActiveToolNames(), ...found])]);
+      const blocked = found.filter((n) => options.canActivate?.(n) === false);
+      const permitted = found.filter((n) => options.canActivate?.(n) !== false);
+      if (permitted.length > 0) {
+        s.setActiveToolsByName([...new Set([...s.getActiveToolNames(), ...permitted])]);
       }
       const lines = [
-        found.length > 0 && `已启用: ${found.join(", ")}（schema 下一步生效，届时直接调用）`,
+        permitted.length > 0 && `已启用: ${permitted.join(", ")}（schema 下一步生效，届时直接调用）`,
+        blocked.length > 0 &&
+          blocked
+            .map((name) => options.blockedMessage?.(name) ?? `策略禁止 agent 启用: ${name}`)
+            .join("\n"),
         missing.length > 0 && `未找到: ${missing.join(", ")}（用 tool_search 确认名字）`,
       ].filter(Boolean);
       return { content: [{ type: "text", text: lines.join("\n") || "没有变化。" }], details: {} };

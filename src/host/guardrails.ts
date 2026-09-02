@@ -69,6 +69,27 @@ const emit = (kind: PolicyEventPayload["kind"], toolName: string, detail: string
   hooks?.emitPolicyEvent({ id: randomUUID(), time: Date.now(), kind, toolName, detail });
 };
 
+/**
+ * A non-bypassable approval layer for capabilities that live outside the
+ * Docker-private workspace. It intentionally sits beside user-editable
+ * per-tool policies so changing a tool from `ask` to `allow` cannot remove
+ * the Docker host boundary.
+ */
+let mandatoryApprovalTools = new Set<string>();
+let mandatoryApprovalRule: string | undefined;
+
+export function setMandatoryToolApprovalGate(
+  toolNames: Iterable<string>,
+  rule?: string,
+): void {
+  mandatoryApprovalTools = new Set(toolNames);
+  mandatoryApprovalRule = rule;
+}
+
+export function recordMandatoryToolBoundary(detail: string): void {
+  emit("blocked", "docker_host_tools", detail);
+}
+
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** 通用人工审批原语：任何模块都可请求用户批准（复用同一张审批卡）。 */
@@ -257,9 +278,18 @@ export function createGuardrailExtension(): InlineExtension {
             reason: `Harness 策略禁止使用工具 ${toolName}。请改用其他方式完成任务。`,
           };
         }
-        if (mode === "ask" || needAsk) {
+        // Docker host-side tools always require their own approval. A user
+        // policy may make a tool stricter (`deny` above), but may not relax
+        // this boundary to `allow`. Do not show a duplicate generic `ask`
+        // card for the same call.
+        const mustAskForHostBoundary = mandatoryApprovalTools.has(toolName);
+        if (mustAskForHostBoundary || mode === "ask" || needAsk) {
           emit("asked", toolName, summarizeInput(input));
-          const approved = await awaitApproval(toolName, input, askRule);
+          const approved = await awaitApproval(
+            toolName,
+            input,
+            mustAskForHostBoundary ? mandatoryApprovalRule : askRule,
+          );
           if (approved) {
             emit("approved", toolName, summarizeInput(input));
             return undefined;

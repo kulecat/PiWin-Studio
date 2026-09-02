@@ -54,6 +54,9 @@ $env:PIWIN_DOCKER_NETWORK = "none"              # set allow only when needed
 $env:PIWIN_DOCKER_MEMORY = "2g"
 $env:PIWIN_DOCKER_CPUS = "2"
 $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
+# Default: do not load host-side extension/MCP packages. Set `ask` only after
+# reviewing their source; manually enable a tool, then approve every call.
+$env:PIWIN_DOCKER_HOST_TOOLS = "deny"
 ```
 
 `readonly` is the default: it mounts the workspace read-only. In Docker mode,
@@ -67,11 +70,23 @@ custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, `grep`, `find`,
 `realpath`, `xargs`, and a non-root `node` user (UID 1000).
 
 This is a first-party **tool-execution** boundary, not a claim that all Agent
-behavior is isolated. PiWin's host process still loads trusted Pi extensions;
-third-party extension tools and MCP servers remain host-side unless they
-independently delegate into the container. The Docker file adapter permits only
-paths inside the active task worktree and rejects symlink resolution outside
-`/workspace`.
+behavior is isolated. In the default `PIWIN_DOCKER_HOST_TOOLS=deny` mode,
+PiWin does not load external Pi extensions or MCP adapters, and it initially
+deactivates every built-in PiWin tool that is not routed through the private
+Docker workspace. The seven volume-routed file/command tools plus the
+tool-directory controls remain available.
+
+For a reviewed, trusted extension or MCP adapter, set
+`PIWIN_DOCKER_HOST_TOOLS=ask` before launch. Its tools still start inactive;
+after a person explicitly enables one, **every actual tool call** shows an
+approval card and produces `asked` / `approved` / `denied` events in the
+session audit log. This approval begins only at tool-call time: extension code
+may execute while Pi loads it, so never use `ask` for code you have not already
+reviewed. An extension that deliberately delegates work into its own container
+is still responsible for that container's policy.
+
+The Docker file adapter permits only paths inside the active task worktree and
+rejects symlink resolution outside `/workspace`.
 
 ## Guarded Git task worktrees
 
@@ -118,8 +133,9 @@ chat process cannot recreate a removed volume: it is stopped at the next Docker
 command, so after import the user should prepare review and then create a new
 task for additional work.
 
-This does not make arbitrary extensions or MCP tools sandboxed. Those routes,
-along with network allowlists and credential isolation, remain later phases.
+This does not make an opt-in extension or MCP tool sandboxed. Network
+allowlists, per-destination audit, and credential isolation remain later
+phases.
 
 ## Execution audit log
 

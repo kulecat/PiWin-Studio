@@ -179,6 +179,26 @@ and recoverable worktree-based agent tasks.
   claim to sandbox third-party tools, model-provider traffic, or future plugin
   code.
 
+### 2026-09-02 — Docker host-tool risk gate and audit
+
+- Added `src/host/docker-host-tools.ts` to identify the seven first-party
+  tools routed through PiWin's Docker-private workspace. In Docker's default
+  `PIWIN_DOCKER_HOST_TOOLS=deny` mode, Pi's external extension/MCP packages
+  are not loaded and all remaining host-side PiWin tools begin inactive.
+- A person may manually enable a known host-side PiWin tool from the Tools UI;
+  every subsequent call is forced through the guardrail approval card even if
+  its configurable per-tool policy says `allow`. The existing `asked`,
+  `approved`, and `denied` policy events are appended to the JSONL audit log.
+- `tool_activate` cannot let the model bypass this default boundary. Setting
+  `PIWIN_DOCKER_HOST_TOOLS=ask` is an explicit advanced opt-in for a
+  pre-reviewed extension/MCP adapter: it remains inactive until enabled, and
+  every actual call still requires approval. Extension code can run while it
+  loads, so this is intentionally not a safe setting for unreviewed code.
+- Docker task behavior remains unchanged: first-party code changes live only
+  in the private volume until the user reviews and imports a patch. Network
+  allowlists, destination-level auditing, and credential isolation are the
+  next containment phase.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
