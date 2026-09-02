@@ -214,6 +214,38 @@ accidental truncation or reordering. It is not a tamper-proof security ledger:
 a user with filesystem access can edit it. Checkpoint references will be added
 with the recovery layer.
 
+## Structural Bash risk gate
+
+PiWin applies a second, execution-independent policy pass to every first-party
+`bash` call, including `pi.bash(...)` inside `code_run`. It parses Bash with the
+WASM `tree-sitter-bash` grammar before the command is routed to PowerShell,
+WSL2, Docker, or the cloud VM. The parser walks command substitutions,
+subshells, pipelines, and `sh`/`bash -c` payloads (up to a bounded depth), so a
+rule aimed at `sudo` also sees `env sudo ...` and `bash -c 'sudo ...'`.
+
+The Harness governance drawer has separate `allow` / `ask` / `deny` controls
+for these behavior classes:
+
+- deletion and irreversible cleanup;
+- privilege escalation, including common wrapper commands;
+- a download piped directly into an interpreter;
+- path arguments that leave the active project workspace; and
+- commands that normally initiate network activity.
+
+The conservative default asks for all but rejects “download then execute”.
+Existing custom regex rules are retained and are now matched against both the
+submitted line and each command extracted from the tree. A single approval
+card records the applicable structural risks and/or custom rule.
+
+The grammar is shipped as unpacked WASM with the Windows application; no native
+`tree-sitter-bash` binding is built or permitted by the pnpm supply-chain
+policy. If the grammar cannot load, PiWin keeps the gate alive with a smaller
+quote-aware lexical scan and marks the approval reason as a parsing fallback.
+This is defense in depth, not a sandbox: dynamically generated shell text,
+scripts read from a file, and arbitrary PowerShell syntax cannot be fully
+understood statically. Docker's private workspace, network proxy, credentials
+filter, and human approvals remain the actual enforcement controls.
+
 ## Remaining security boundary work
 
 The Docker restricted tool profile is the first Windows containment layer.

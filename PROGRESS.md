@@ -251,6 +251,27 @@ and recoverable worktree-based agent tasks.
   one-shot command received it but returned `[REDACTED:NPM_TOKEN]`, audit
   contained the name but not the value, and the temporary volume was removed.
 
+### 2026-09-02 — Structural Bash permission policy
+
+- Added a WASM `web-tree-sitter` + `tree-sitter-bash` parser in
+  `src/host/shell-risk.ts`. It structurally extracts commands in pipelines,
+  substitutions, subshells and bounded `sh` / `bash -c` recursion before a
+  first-party `bash` call is executed. Existing user command regexes now also
+  apply to those extracted commands rather than only the outer string.
+- Added independently configurable `allow` / `ask` / `deny` policies for
+  deletion, privilege escalation (including common wrappers), download piped
+  to an interpreter, project-workspace escape, and common network commands.
+  Defaults ask for each behavior except download-to-execute, which is denied.
+  These policies cover normal `bash` and `pi.bash(...)` inside `code_run`.
+- Added the policies to the Harness governance drawer and made their decision
+  text flow through the existing human approval card and hash-chained policy
+  audit. The shipped package's optional native binding remains disabled by
+  pnpm policy: PiWin uses only its published `.wasm` grammar.
+- Kept a quote-aware lexical fallback if the grammar fails to load and labels
+  that fallback in the approval request. This is a policy layer, not a claim
+  of complete static analysis or a replacement for the Docker/worktree
+  enforcement boundary.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin

@@ -5,7 +5,14 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Plus, ShieldCheck, Trash2, X } from "lucide-react";
-import type { CommandRule, HarnessGuardrails, ToolPolicyMode } from "@shared/protocol";
+import {
+  DEFAULT_SHELL_RISK_POLICIES,
+  SHELL_RISK_CATEGORIES,
+  type CommandRule,
+  type HarnessGuardrails,
+  type ShellRiskCategory,
+  type ToolPolicyMode,
+} from "@shared/protocol";
 import { useAppStore, type ChatState } from "@/stores/app-store";
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
@@ -26,6 +33,17 @@ function presetRules(t: Translator): CommandRule[] {
     { pattern: "git\\s+push\\s+.*(--force|-f)\\b", action: "ask", note: t("guardrails.ruleForcePush") },
     { pattern: "\\bsudo\\b", action: "ask", note: t("guardrails.ruleSudo") },
   ];
+}
+
+function riskLabel(category: ShellRiskCategory, t: Translator): string {
+  const labels: Record<ShellRiskCategory, string> = {
+    deletion: t("guardrails.riskDeletion"),
+    privilegeEscalation: t("guardrails.riskPrivilege"),
+    downloadExecution: t("guardrails.riskDownloadExec"),
+    workspaceEscape: t("guardrails.riskWorkspaceEscape"),
+    network: t("guardrails.riskNetwork"),
+  };
+  return labels[category];
 }
 
 const KIND_STYLE: Record<string, string> = {
@@ -60,6 +78,9 @@ export function GuardrailsDrawer({
 
   const g = chat.guardrails;
   const [toolPolicies, setToolPolicies] = useState<Record<string, ToolPolicyMode>>({});
+  const [shellRiskPolicies, setShellRiskPolicies] = useState<Record<ShellRiskCategory, ToolPolicyMode>>({
+    ...DEFAULT_SHELL_RISK_POLICIES,
+  });
   const [rules, setRules] = useState<CommandRule[]>([]);
   const [maxTurns, setMaxTurns] = useState("");
   const [maxCalls, setMaxCalls] = useState("");
@@ -77,6 +98,7 @@ export function GuardrailsDrawer({
   useEffect(() => {
     if (!g) return;
     setToolPolicies(g.toolPolicies);
+    setShellRiskPolicies({ ...DEFAULT_SHELL_RISK_POLICIES, ...g.shellRiskPolicies });
     setRules(g.commandRules);
     setMaxTurns(g.maxTurnsPerPrompt ? String(g.maxTurnsPerPrompt) : "");
     setMaxCalls(g.maxToolCallsPerPrompt ? String(g.maxToolCallsPerPrompt) : "");
@@ -95,6 +117,7 @@ export function GuardrailsDrawer({
     toolPolicies: Object.fromEntries(
       Object.entries(toolPolicies).filter(([, v]) => v !== "allow"),
     ),
+    shellRiskPolicies,
     commandRules: rules,
     maxTurnsPerPrompt: Number(maxTurns) > 0 ? Number(maxTurns) : undefined,
     maxToolCallsPerPrompt: Number(maxCalls) > 0 ? Number(maxCalls) : undefined,
@@ -111,6 +134,7 @@ export function GuardrailsDrawer({
     if (!g) return false;
     return JSON.stringify(buildPayload()) !== JSON.stringify({
       toolPolicies: g.toolPolicies,
+      shellRiskPolicies: { ...DEFAULT_SHELL_RISK_POLICIES, ...g.shellRiskPolicies },
       commandRules: g.commandRules,
       maxTurnsPerPrompt: g.maxTurnsPerPrompt,
       maxToolCallsPerPrompt: g.maxToolCallsPerPrompt,
@@ -120,7 +144,7 @@ export function GuardrailsDrawer({
       maxRepeatedToolCalls: g.maxRepeatedToolCalls,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [g, toolPolicies, rules, maxTurns, maxCalls, maxCost, subMaxConcurrent, subMaxTurns, maxRepeats]);
+  }, [g, toolPolicies, shellRiskPolicies, rules, maxTurns, maxCalls, maxCost, subMaxConcurrent, subMaxTurns, maxRepeats]);
 
   return (
     <div className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-bg-secondary">
@@ -175,6 +199,47 @@ export function GuardrailsDrawer({
                         )}
                       >
                         {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* 结构化 Bash 风险 */}
+        <section>
+          <div className="pb-1 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+            {t("guardrails.shellRisks")}
+          </div>
+          <p className="pb-2 text-[10.5px] leading-4 text-fg-muted">
+            {t("guardrails.shellRisksHint")}
+          </p>
+          <div className="space-y-1.5">
+            {SHELL_RISK_CATEGORIES.map((category) => {
+              const mode = shellRiskPolicies[category];
+              return (
+                <div key={category} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 text-[11.5px] text-fg-secondary">{riskLabel(category, t)}</span>
+                  <div className="flex overflow-hidden rounded-lg border border-border">
+                    {modes(t).map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        onClick={() => setShellRiskPolicies((previous) => ({ ...previous, [category]: entry.id }))}
+                        className={cn(
+                          "px-2 py-1 text-[10.5px] transition-colors",
+                          mode === entry.id
+                            ? entry.id === "deny"
+                              ? "bg-danger/15 font-medium text-danger"
+                              : entry.id === "ask"
+                                ? "bg-warning/15 font-medium text-warning"
+                                : "bg-success/15 font-medium text-success"
+                            : "text-fg-muted hover:bg-bg-hover",
+                        )}
+                      >
+                        {entry.label}
                       </button>
                     ))}
                   </div>

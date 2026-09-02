@@ -245,6 +245,29 @@ export interface ToolInfoPayload {
 
 export type ToolPolicyMode = "allow" | "ask" | "deny";
 
+/** High-risk behaviors extracted from the Bash syntax tree before execution. */
+export const SHELL_RISK_CATEGORIES = [
+  "deletion",
+  "privilegeEscalation",
+  "downloadExecution",
+  "workspaceEscape",
+  "network",
+] as const;
+
+export type ShellRiskCategory = (typeof SHELL_RISK_CATEGORIES)[number];
+
+/**
+ * Conservative baseline for structurally detected shell behavior. Users can
+ * relax or tighten every category per chat in the Harness governance drawer.
+ */
+export const DEFAULT_SHELL_RISK_POLICIES: Record<ShellRiskCategory, ToolPolicyMode> = {
+  deletion: "ask",
+  privilegeEscalation: "ask",
+  downloadExecution: "deny",
+  workspaceEscape: "ask",
+  network: "ask",
+};
+
 export interface CommandRule {
   /** 匹配 bash/vm_bash 命令的正则（JS 语法，不带斜杠） */
   pattern: string;
@@ -255,6 +278,11 @@ export interface CommandRule {
 export interface HarnessGuardrails {
   /** 按工具名的策略，缺省 allow */
   toolPolicies: Record<string, ToolPolicyMode>;
+  /**
+   * Bash AST 识别的高风险操作策略。缺失类别回退到保守默认值，保证旧会话
+   * 配置升级后不会静默失去保护。
+   */
+  shellRiskPolicies?: Partial<Record<ShellRiskCategory, ToolPolicyMode>>;
   /** 命令级规则（作用于 bash / vm_bash 的 command 参数） */
   commandRules: CommandRule[];
   /** 每次 prompt 允许的最大轮次（0/undefined = 不限） */

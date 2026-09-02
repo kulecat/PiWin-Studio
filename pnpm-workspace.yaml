@@ -5,3 +5,6 @@ allowBuilds:
   esbuild: true
   node-pty: true
   protobufjs: false
+  # PiWin loads the package's shipped WASM grammar only; its optional native
+  # Node binding is not used, so never permit its install-time build script.
+  tree-sitter-bash: false

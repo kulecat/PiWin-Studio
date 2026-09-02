@@ -46,6 +46,7 @@ import {
   resolveApproval,
   setGuardrailHooks,
   setGuardrails,
+  setGuardrailWorkspace,
   setMandatoryToolApprovalGate,
 } from "./guardrails";
 import { abortAllSubagents, buildSubagentTool, totalSubagentCost } from "./subagents";
@@ -602,6 +603,7 @@ function captureAssembly(): Omit<
 async function init(msg: HostInit): Promise<void> {
   chatId = msg.chatId;
   cwd = msg.cwd;
+  setGuardrailWorkspace(cwd);
   configureAuditLog(cwd, chatId);
   locale = msg.locale === "en" ? "en" : "zh";
   preset = localizePreset(getRuntimePreset(msg.presetId, msg.kind), locale);
@@ -760,6 +762,10 @@ async function init(msg: HostInit): Promise<void> {
         ...guardrails,
         ...preset.guardrails,
         toolPolicies: { ...guardrails.toolPolicies, ...preset.guardrails.toolPolicies },
+        shellRiskPolicies: {
+          ...guardrails.shellRiskPolicies,
+          ...preset.guardrails.shellRiskPolicies,
+        },
         commandRules: [...guardrails.commandRules, ...preset.guardrails.commandRules],
       });
     }

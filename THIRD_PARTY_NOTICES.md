@@ -15,3 +15,11 @@ separate changes on top of that upstream work.
 This application uses `@earendil-works/pi-coding-agent`, which is provided by
 the [Pi Agent Harness](https://github.com/earendil-works/pi). Its license and
 notices are distributed with the installed package.
+
+## Bash syntax parser
+
+The structural Bash policy uses `web-tree-sitter` and the
+[`tree-sitter-bash`](https://github.com/tree-sitter/tree-sitter-bash) grammar.
+Both are MIT licensed; their license notices are distributed with the installed
+packages. PiWin loads the grammar's published WASM asset and does not include
+or enable its optional native Node binding.

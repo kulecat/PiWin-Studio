@@ -75,7 +75,7 @@ Pick how much power each chat gets — presets gate tools and UI surfaces:
 
 - **Visual assembly canvas** — the full agent pipeline as a live graph: model → system prompt (with sources, AGENTS.md composition, token estimates) → extra instructions → tools → extensions → skills → prompt templates
 - **Hot re-orchestration** — toggle skills/extensions or append system instructions per session; `session.reload()` recomposes the system prompt in place while keeping conversation history
-- **Guardrails** — per-tool allow/ask/deny policies, regex rules for bash commands, budgets (turns, tool calls, session cost), subagent limits, repeated-call circuit breaker; everything surfaces as inline approval cards
+- **Guardrails** — per-tool allow/ask/deny policies, AST-based Bash risk controls (deletion, privilege escalation, download-to-execute, workspace escape, network), custom regex rules applied to nested commands, budgets (turns, tool calls, session cost), subagent limits, and a repeated-call circuit breaker; everything surfaces as inline approval cards
 - **Self-tuning** — the agent can propose assembly changes via `harness_propose`; proposals require approval and hot-apply after the turn
 - **Trajectory drawer** — per-step snapshots of the exact assembly and tool calls sent to the model
 - **Tool disclosure** — with large tool sets, tools collapse behind `tool_search` / `tool_activate` to save context

@@ -12,6 +12,9 @@ files:
   - package.json
 asarUnpack:
   - node_modules/@earendil-works/**
+  # The Bash policy parser loads its WASM grammar by absolute path at runtime.
+  - node_modules/web-tree-sitter/**
+  - node_modules/tree-sitter-bash/**
 npmRebuild: false
 mac:
   category: public.app-category.developer-tools

@@ -65,6 +65,8 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^4.4.3",
     "tailwindcss": "^4.3.3",
+    "tree-sitter-bash": "^0.25.1",
+    "web-tree-sitter": "^0.25.10",
     "zustand": "^5.0.14"
   }
 }

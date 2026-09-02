@@ -4,7 +4,7 @@
  *
  * Implemented as a pi inline extension intercepting tool_call events:
  * - per-tool policy: allow / ask (human approval) / deny
- * - command rules: regexes over bash/vm_bash commands -> deny or ask
+ * - tree-sitter Bash risk analysis plus user command rules -> deny or ask
  * - budgets: max turns & tool calls per prompt, max session cost
  *
  * State is a mutable reference read on every event, so changes apply
@@ -17,14 +17,30 @@ import type {
   HarnessGuardrails,
   PolicyEventPayload,
 } from "@shared/protocol";
+import { analyzeShellRisks } from "./shell-risk";
+
+// TypeScript's `import type` must not erase the runtime default policy.
+import { DEFAULT_SHELL_RISK_POLICIES as defaultShellRiskPolicies } from "@shared/protocol";
 
 export const guardrails: HarnessGuardrails = {
   toolPolicies: {},
+  shellRiskPolicies: { ...defaultShellRiskPolicies },
   commandRules: [],
 };
 
+/** Workspace whose project boundary structural Bash checks enforce. */
+let guardrailWorkspace = process.cwd();
+
+export function setGuardrailWorkspace(workspace: string): void {
+  guardrailWorkspace = workspace;
+}
+
 export function setGuardrails(next: HarnessGuardrails): void {
   guardrails.toolPolicies = next.toolPolicies ?? {};
+  guardrails.shellRiskPolicies = {
+    ...defaultShellRiskPolicies,
+    ...next.shellRiskPolicies,
+  };
   guardrails.commandRules = next.commandRules ?? [];
   guardrails.maxTurnsPerPrompt = next.maxTurnsPerPrompt;
   guardrails.maxToolCallsPerPrompt = next.maxToolCallsPerPrompt;
@@ -126,6 +142,53 @@ const summarizeInput = (input: Record<string, unknown>): string => {
   return s.length > 160 ? `${s.slice(0, 160)}…` : s;
 };
 
+type BashRequirement =
+  | { action: "allow" }
+  | { action: "ask"; label: string }
+  | { action: "deny"; label: string };
+
+/**
+ * Checks custom regex rules against both the submitted command and every
+ * command extracted from its syntax tree. Thus an existing `sudo` rule also
+ * catches `bash -c 'sudo …'` or a nested substitution rather than only the
+ * outer string.
+ */
+async function bashRequirement(command: string): Promise<BashRequirement> {
+  const analysis = await analyzeShellRisks(command, guardrailWorkspace);
+  const candidates = new Set([
+    command,
+    ...analysis.commands.map((item) => [item.name, ...item.args].join(" ")),
+  ]);
+  const askLabels: string[] = [];
+  for (const rule of guardrails.commandRules) {
+    let expression: RegExp;
+    try {
+      expression = new RegExp(rule.pattern);
+    } catch {
+      // Invalid user-provided regexes do not make an execution path fail open.
+      continue;
+    }
+    if (![...candidates].some((candidate) => {
+      expression.lastIndex = 0;
+      return expression.test(candidate);
+    })) continue;
+    const label = rule.note ?? rule.pattern;
+    if (rule.action === "deny") return { action: "deny", label: `命令规则「${label}」` };
+    askLabels.push(`命令规则「${label}」`);
+  }
+
+  for (const risk of analysis.risks) {
+    const action = guardrails.shellRiskPolicies?.[risk.category] ?? defaultShellRiskPolicies[risk.category];
+    if (action === "deny") return { action: "deny", label: `结构化风险：${risk.detail}` };
+    if (action === "ask") askLabels.push(`结构化风险：${risk.detail}`);
+  }
+  if (askLabels.length > 0) {
+    const fallback = analysis.usedFallback ? "（Bash 语法解析回退）" : "";
+    return { action: "ask", label: `${[...new Set(askLabels)].join("；")}${fallback}` };
+  }
+  return { action: "allow" };
+}
+
 /**
  * bash 命令级策略检查（命令规则 + bash 工具策略），供 code_run 等
  * 绕过 session 工具循环的内部调用复用——保证同一条策略门管住所有执行路径。
@@ -133,31 +196,23 @@ const summarizeInput = (input: Record<string, unknown>): string => {
 export async function enforceBashPolicy(
   command: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  if ((guardrails.toolPolicies["bash"] ?? "allow") === "deny") {
+  const toolMode = guardrails.toolPolicies["bash"] ?? "allow";
+  if (toolMode === "deny") {
     emit("blocked", "bash", `code_run 内联命令被工具策略拦截: ${command.slice(0, 120)}`);
     return { ok: false, reason: "Harness 策略禁止使用 bash。" };
   }
-  for (const rule of guardrails.commandRules) {
-    let re: RegExp;
-    try {
-      re = new RegExp(rule.pattern);
-    } catch {
-      continue;
-    }
-    if (!re.test(command)) continue;
-    const label = rule.note ?? rule.pattern;
-    if (rule.action === "deny") {
-      emit("blocked", "bash", `命令规则「${label}」拦截: ${command.slice(0, 120)}`);
-      return { ok: false, reason: `Harness 策略禁止此命令（规则: ${label}）。` };
-    }
-    emit("asked", "bash", command.slice(0, 160));
-    const approved = await awaitApproval("bash", { command }, label);
-    if (approved) {
-      emit("approved", "bash", command.slice(0, 160));
-      return { ok: true };
-    }
-    emit("denied", "bash", command.slice(0, 160));
-    return { ok: false, reason: "用户拒绝了此命令。" };
+  const requirement = await bashRequirement(command);
+  if (requirement.action === "deny") {
+    emit("blocked", "bash", `${requirement.label} 拦截: ${command.slice(0, 120)}`);
+    return { ok: false, reason: `Harness 策略禁止此命令（${requirement.label}）。` };
+  }
+  if (toolMode === "ask" || requirement.action === "ask") {
+    const approved = await requestHumanApproval(
+      "bash",
+      { command },
+      requirement.action === "ask" ? requirement.label : "bash 工具策略",
+    );
+    if (!approved) return { ok: false, reason: "用户拒绝了此命令。" };
   }
   return { ok: true };
 }
@@ -245,31 +300,18 @@ export function createGuardrailExtension(): InlineExtension {
           }
         }
 
-        // 4) command rules for bash-like tools
-        let needAsk = false;
-        let askRule: string | undefined;
-        // bash 是世界路由工具：同一条规则同时管住本机与云端 VM 的命令执行
+        // 4) Bash uses a real syntax tree to expose nested commands, pipeline
+        // downloads, privilege wrappers, project escapes, and network tools.
+        // Legacy custom regex rules are applied to every extracted command too.
+        let bashPolicy: BashRequirement = { action: "allow" };
         if (toolName === "bash" && typeof input.command === "string") {
-          for (const rule of guardrails.commandRules) {
-            let re: RegExp;
-            try {
-              re = new RegExp(rule.pattern);
-            } catch {
-              continue;
-            }
-            if (re.test(input.command)) {
-              const label = rule.note ?? rule.pattern;
-              if (rule.action === "deny") {
-                emit("blocked", toolName, `命令规则「${label}」拦截: ${String(input.command).slice(0, 120)}`);
-                return {
-                  block: true,
-                  reason: `Harness 策略禁止此命令（规则: ${label}）。请改用其他方式或询问用户。`,
-                };
-              }
-              needAsk = true;
-              askRule = label;
-              break;
-            }
+          bashPolicy = await bashRequirement(input.command);
+          if (bashPolicy.action === "deny") {
+            emit("blocked", toolName, `${bashPolicy.label} 拦截: ${input.command.slice(0, 120)}`);
+            return {
+              block: true,
+              reason: `Harness 策略禁止此命令（${bashPolicy.label}）。请改用其他方式或询问用户。`,
+            };
           }
         }
 
@@ -287,18 +329,17 @@ export function createGuardrailExtension(): InlineExtension {
         // this boundary to `allow`. Do not show a duplicate generic `ask`
         // card for the same call.
         const mustAskForHostBoundary = mandatoryApprovalTools.has(toolName);
-        if (mustAskForHostBoundary || mode === "ask" || needAsk) {
-          emit("asked", toolName, summarizeInput(input));
-          const approved = await awaitApproval(
+        if (mustAskForHostBoundary || mode === "ask" || bashPolicy.action === "ask") {
+          const approved = await requestHumanApproval(
             toolName,
             input,
-            mustAskForHostBoundary ? mandatoryApprovalRule : askRule,
+            mustAskForHostBoundary
+              ? mandatoryApprovalRule
+              : bashPolicy.action === "ask"
+                ? bashPolicy.label
+                : "工具策略",
           );
-          if (approved) {
-            emit("approved", toolName, summarizeInput(input));
-            return undefined;
-          }
-          emit("denied", toolName, summarizeInput(input));
+          if (approved) return undefined;
           return {
             block: true,
             reason: `用户拒绝了本次 ${toolName} 调用。请调整方案或询问用户。`,
