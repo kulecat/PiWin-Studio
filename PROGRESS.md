@@ -159,6 +159,26 @@ and recoverable worktree-based agent tasks.
   those tools from bypassing the private-copy hand-off. Full first-party file
   routing remains a separate phase.
 
+### 2026-09-02 — Unified Docker first-party file-tool routing
+
+- Added `src/host/docker-workspace.ts`, a Docker-volume adapter shared by the
+  Pi built-in `read`, `write`, `edit`, `grep`, `find`, and `ls` tools. These
+  tools now use the same `/workspace` view as Docker `bash` commands.
+- In writable Docker tasks, file operations reach only the task-specific named
+  volume. The host worktree remains untouched until the existing reviewed patch
+  import step. In Docker `readonly` mode, reads/searches use the read-only
+  mount and writes fail at the Docker profile boundary.
+- Enforced a path boundary before every operation: host paths must be below the
+  active task worktree, then existing symlinks (or a write target's parent)
+  must resolve below `/workspace`. Paths escaping the task are rejected.
+- Added Docker-backed `grep`, `find`, and `ls` implementations so file search
+  does not silently fall back to the host. `find` enumerates tracked and
+  non-ignored untracked files from the private Git baseline; `grep` searches
+  that same set inside Docker.
+- Custom Pi extensions and MCP tools remain host-side. This milestone does not
+  claim to sandbox third-party tools, model-provider traffic, or future plugin
+  code.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -201,6 +221,13 @@ and recoverable worktree-based agent tasks.
 - Verified the stale-volume guard: an old host process cannot cause Docker to
   auto-create an empty replacement volume after a private copy is imported or
   discarded.
+- Ran a disposable private-volume file-tool smoke test: `mkdir`, `write`,
+  `read`, directory listing, Git-aware file find, in-volume grep, host-path
+  escape rejection, and confirmation that no test directory was written into
+  the host worktree all passed (`DOCKER_FILE_TOOL_SMOKE_OK`).
+- Verified the Docker file-search fallback for a worktree whose `.git` pointer
+  cannot be resolved inside the container; it uses in-container `find` rather
+  than falling back to the host (`DOCKER_PROJECT_FILES_FALLBACK_OK`).
 - Final installer SHA-256:
   `1DDBA8DA6885131F0E35DCFEB94D677C29AFEB947A50E8BD1D3674403DE04915`
   (`PiWin Studio-0.1.6-win-x64.exe`, 133,910,613 bytes).
@@ -216,21 +243,22 @@ and recoverable worktree-based agent tasks.
 - The packaged desktop UI has not yet had a manual end-to-end smoke test on a
   clean user profile.
 - The current local PowerShell runner is a convenience runner, not a security
-  boundary. Docker now has a private writable task hand-off, but all-file-tool
-  routing, WSL2 containment, and path/network policy controls remain pending.
+  boundary. Docker covers Pi's built-in command and file tools, but WSL2
+  containment, network policy, and third-party extension/MCP routing remain
+  pending.
 
 ## Next work
 
-1. Add checkpoint references and a read-only audit viewer.
-2. Extend the existing allow / ask / deny gate with workspace-path and network
+1. Add a Docker proxy sidecar with domain allowlists and privacy-preserving
+   request audit, while keeping network disabled by default.
+2. Add checkpoint references and a read-only audit viewer, including private
+   patch-import lifecycle events.
+3. Extend the existing allow / ask / deny gate with workspace-path and network
    destination rules.
-3. Route all first-party file operations through the same private task
-   boundary, so Docker's `read` / `write` / `edit` route consistently.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
    experimental after all built-in tool routes are verified.
-5. Add the proxy-container allowlist and privacy-preserving network audit.
-6. Add WSL2 containment profiles and explicit host-execution confirmation.
-7. Persist isolated worktree tasks, checkpoints, merge state, and recovery
+5. Add WSL2 containment profiles and explicit host-execution confirmation.
+6. Persist isolated worktree tasks, checkpoints, merge state, and recovery
    information for multi-agent workflows.
 
 ## Working agreement

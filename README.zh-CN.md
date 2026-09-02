@@ -37,7 +37,7 @@
 
 **PiWin Studio** 是基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的桌面工作台。它保留 Bivor 的 Electron/Pi SDK 基础，并新增 Windows 打包、PowerShell 执行兼容、Docker 受限命令执行和审计层。
 
-Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制和私有任务副本补丁导入的显式 Docker 命令 profile。WSL2 隔离、全部文件工具路由和可恢复多 Agent 工作流见 [docs/windows-port.md](docs/windows-port.md)。
+Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制、内置文件工具统一路由和私有任务副本补丁导入的显式 Docker 工具 profile。WSL2 隔离和可恢复多 Agent 工作流见 [docs/windows-port.md](docs/windows-port.md)。
 
 每个会话都在独立的 Electron utility process 中运行 pi SDK（`AgentSessionRuntime`）。会话、认证、技能、提示模板、MCP 配置与 pi CLI 完全互通（`~/.pi/agent/`），终端与桌面端可以随时切换。
 
@@ -86,7 +86,7 @@ Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命�
 - **执行世界** — 内置 bash/read/write/edit 可在本地或云端 VM 中执行(`set_execution_world`)
 - **云端 VM 沙箱(E2B)** — 完整桌面 VM,实时画面流、`vm_gui` 鼠标键盘控制、`vm_file` 文件传输、`vm_screenshot`
 - **本地沙箱** — macOS seatbelt 配置:`off` / `workspace` / `strict`
-- **受限 Docker 命令（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制，以及 `readonly` 查看模式和私有 volume 可写任务模式
+- **受限 Docker 工具（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制；`bash/read/write/edit/grep/find/ls` 共享只读或任务私有 volume，导入补丁并人工确认后才改宿主 worktree
 - **子 agent** — `subagent_run` 最多并行 4 个(可只读或绑定 VM),Dock 实时监控
 - **浏览器** — puppeteer-core 驱动有头 Chrome/Edge,持久化用户配置
 - **Web** — Tavily 驱动的 `web_search` + 免 key 的 `web_fetch`(网页转 markdown)

@@ -139,7 +139,7 @@ export const zh = {
     dockerNetworkAllow: "已显式允许",
     dockerSandboxControls: "容器根文件系统只读、移除 Linux capabilities、禁止提权、隔离 IPC，并只提供临时可写目录。",
     dockerSandboxScope:
-      "Docker 可写命令使用私有任务 volume，随后经人工确认导入补丁。宿主 write/edit 与自定义扩展尚未路由进容器。",
+      "Docker 将 Pi 内置 bash/read/write/edit/grep/find/ls 路由到同一私有任务 volume，随后经人工确认导入补丁。自定义扩展与 MCP 工具仍在宿主侧。",
     dockerSandboxConfig:
       "启动前设置：PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite（默认 readonly）、PIWIN_DOCKER_NETWORK=none|allow。可写模式需要一个全新的 PiWin 任务 worktree；也可用 PIWIN_DOCKER_MEMORY、PIWIN_DOCKER_CPUS、PIWIN_DOCKER_PIDS_LIMIT 调整限制。",
     sandboxTitle: "云端虚拟机（E2B）",

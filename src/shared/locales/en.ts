@@ -142,7 +142,7 @@ export const en: Messages = {
     dockerSandboxControls:
       "The container root filesystem is read-only, Linux capabilities are dropped, privilege escalation and IPC sharing are disabled, and writable paths are temporary.",
     dockerSandboxScope:
-      "Writable Docker commands use a private task volume, then a reviewed patch import. Host write/edit and custom extensions are not yet container-routed.",
+      "Docker routes Pi's built-in bash/read/write/edit/grep/find/ls tools through one task-private volume, then imports a reviewed patch. Custom extensions and MCP tools remain host-side.",
     dockerSandboxConfig:
       "Set before launch: PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite (readonly is default), PIWIN_DOCKER_NETWORK=none|allow. Writable mode needs a fresh PiWin task worktree. PIWIN_DOCKER_MEMORY, PIWIN_DOCKER_CPUS, and PIWIN_DOCKER_PIDS_LIMIT adjust limits.",
     sandboxTitle: "Cloud VM (E2B)",

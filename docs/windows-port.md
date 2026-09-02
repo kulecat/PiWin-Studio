@@ -56,18 +56,22 @@ $env:PIWIN_DOCKER_CPUS = "2"
 $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
 ```
 
-`readonly` is the default: it mounts the workspace read-only and makes PiWin's
-`write` / `edit` tools reject changes. `readwrite` starts a private Docker copy
-for a fresh guarded task; it never grants a container a writable host mount.
+`readonly` is the default: it mounts the workspace read-only. In Docker mode,
+PiWin routes its first-party `bash`, `read`, `write`, `edit`, `grep`, `find`,
+and `ls` tools through the same Docker workspace; write operations fail in the
+read-only profile at the Docker boundary. `readwrite` starts a private Docker
+copy for a fresh guarded task; it never grants a container a writable host
+mount.
 The default image is `node:22-bookworm` because this workflow needs Git. A
-custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, and a non-root `node`
-user (UID 1000).
+custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, `grep`, `find`,
+`realpath`, `xargs`, and a non-root `node` user (UID 1000).
 
-This is a **command-execution** boundary, not a claim that all Agent behavior
-is isolated. PiWin's host process still loads trusted Pi extensions and serves
-some file operations. Host `write` / `edit` are deliberately blocked whenever
-Docker is selected; a later phase will route all first-party file operations
-through the same private task boundary.
+This is a first-party **tool-execution** boundary, not a claim that all Agent
+behavior is isolated. PiWin's host process still loads trusted Pi extensions;
+third-party extension tools and MCP servers remain host-side unless they
+independently delegate into the container. The Docker file adapter permits only
+paths inside the active task worktree and rejects symlink resolution outside
+`/workspace`.
 
 ## Guarded Git task worktrees
 
@@ -114,8 +118,8 @@ chat process cannot recreate a removed volume: it is stopped at the next Docker
 command, so after import the user should prepare review and then create a new
 task for additional work.
 
-This does not make arbitrary extensions, MCP tools, or host-side `read` tools
-sandboxed. Those routes remain the next containment phase.
+This does not make arbitrary extensions or MCP tools sandboxed. Those routes,
+along with network allowlists and credential isolation, remain later phases.
 
 ## Execution audit log
 
@@ -140,8 +144,9 @@ with the recovery layer.
 
 ## Remaining security boundary work
 
-The Docker restricted command profile is the first Windows containment layer.
+The Docker restricted tool profile is the first Windows containment layer.
 Native PowerShell and WSL2 are convenience runners and must always be visibly
 marked as host execution in the UI and audit log. Docker task-private copies
-now provide the writable-command boundary; network allowlists, credential
-isolation, and all-file-tool routing remain planned.
+now provide a unified first-party file and command boundary; network allowlists,
+credential isolation, third-party tool routing, and durable recovery remain
+planned.

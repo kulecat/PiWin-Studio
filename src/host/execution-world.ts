@@ -10,15 +10,25 @@
 import {
   createBashToolDefinition,
   createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
   createLocalBashOperations,
   createReadToolDefinition,
   createWriteToolDefinition,
   type BashOperations,
   type EditOperations,
+  type FindOperations,
+  type GrepToolDetails,
+  type GrepToolInput,
+  type LsOperations,
   type ReadOperations,
   type ToolDefinition,
   type WriteOperations,
+  formatSize,
+  truncateHead,
 } from "@earendil-works/pi-coding-agent";
+import * as nodePath from "node:path";
 import { ensureSandbox } from "./sandbox";
 import { currentLocalSandboxMode, wrapLocalSandbox } from "./local-sandbox";
 import {
@@ -28,8 +38,20 @@ import {
   warmAgentShell,
   writeAgentShell,
 } from "./agent-shell";
-import { isDockerHostWriteBlocked, resolveLocalPtyInvocation } from "./windows-execution";
+import { resolveLocalPtyInvocation } from "./windows-execution";
 import { runAuditedCommand } from "./audit";
+import {
+  dockerAccess,
+  dockerExists,
+  dockerGrepFiles,
+  dockerIsDirectory,
+  dockerMkdir,
+  dockerProjectFiles,
+  dockerReadDir,
+  dockerReadFile,
+  dockerWorkspaceRoutingActive,
+  dockerWriteFile,
+} from "./docker-workspace";
 
 export type ExecutionWorld = "local" | "vm";
 
@@ -322,19 +344,53 @@ function localReadOps(): ReadOperations {
   };
 }
 
+/** Docker is a local execution route, but its filesystem is a private volume. */
+function dockerFileRoutingHere(): boolean {
+  return world === "local" && dockerWorkspaceRoutingActive();
+}
+
+function requireDockerFileRouting(): void {
+  if (dockerFileRoutingHere()) return;
+  throw new Error("Docker file tools are unavailable after switching this chat to the cloud VM.");
+}
+
+function matchesToolGlob(relativePath: string, pattern: string): boolean {
+  const normalizedPath = relativePath.split(nodePath.sep).join("/");
+  const normalizedPattern = pattern.split(nodePath.sep).join("/");
+  if (normalizedPattern.includes("/")) {
+    return (
+      nodePath.posix.matchesGlob(normalizedPath, normalizedPattern) ||
+      nodePath.posix.matchesGlob(normalizedPath, `**/${normalizedPattern}`)
+    );
+  }
+  return nodePath.posix.matchesGlob(nodePath.posix.basename(normalizedPath), normalizedPattern);
+}
+
 const readOps: ReadOperations = {
-  readFile: (p) => (world === "local" ? localReadOps().readFile(p) : vmReadFile(p)),
-  access: (p) => (world === "local" ? localReadOps().access(p) : vmAccess(p)),
+  readFile: (p) => {
+    if (world !== "local") return vmReadFile(p);
+    return dockerFileRoutingHere() ? dockerReadFile(localCwd, p) : localReadOps().readFile(p);
+  },
+  access: (p) => {
+    if (world !== "local") return vmAccess(p);
+    return dockerFileRoutingHere() ? dockerAccess(localCwd, p) : localReadOps().access(p);
+  },
+  detectImageMimeType: async (p) => {
+    if (!dockerFileRoutingHere()) return null;
+    // MIME detection only uses the requested name; pixels remain in Docker.
+    const ext = nodePath.extname(p).toLowerCase();
+    if (ext === ".png") return "image/png";
+    if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+    if (ext === ".gif") return "image/gif";
+    if (ext === ".webp") return "image/webp";
+    return null;
+  },
 };
 
 const writeOps: WriteOperations = {
   writeFile: async (p, content) => {
     if (world === "local") {
-      if (isDockerHostWriteBlocked()) {
-        throw new Error(
-          "Docker keeps Pi write/edit operations away from the host. Use bash inside the private task copy, then import its patch from the task worktree menu.",
-        );
-      }
+      if (dockerFileRoutingHere()) return dockerWriteFile(localCwd, p, content);
       const { writeFile } = await import("node:fs/promises");
       await writeFile(p, content, "utf8");
       return;
@@ -343,11 +399,7 @@ const writeOps: WriteOperations = {
   },
   mkdir: async (dir) => {
     if (world === "local") {
-      if (isDockerHostWriteBlocked()) {
-        throw new Error(
-          "Docker keeps Pi write/edit operations away from the host. Use bash inside the private task copy, then import its patch from the task worktree menu.",
-        );
-      }
+      if (dockerFileRoutingHere()) return dockerMkdir(localCwd, dir);
       const { mkdir } = await import("node:fs/promises");
       await mkdir(dir, { recursive: true });
       return;
@@ -363,16 +415,129 @@ const editOps: EditOperations = {
   access: readOps.access,
 };
 
+const dockerLsOps: LsOperations = {
+  exists: async (p) => {
+    requireDockerFileRouting();
+    return dockerExists(localCwd, p);
+  },
+  stat: async (p) => {
+    requireDockerFileRouting();
+    const isDirectory = await dockerIsDirectory(localCwd, p);
+    return { isDirectory: () => isDirectory };
+  },
+  readdir: async (p) => {
+    requireDockerFileRouting();
+    return dockerReadDir(localCwd, p);
+  },
+};
+
+const dockerFindOps: FindOperations = {
+  exists: async (p) => {
+    requireDockerFileRouting();
+    return dockerExists(localCwd, p);
+  },
+  glob: async (pattern, searchPath, options) => {
+    requireDockerFileRouting();
+    const files = await dockerProjectFiles(localCwd, searchPath);
+    return files.filter((entry) => {
+      const relativePath = nodePath.relative(searchPath, entry).split(nodePath.sep).join("/");
+      return (
+        matchesToolGlob(relativePath, pattern) &&
+        !options.ignore.some((ignored) => matchesToolGlob(relativePath, ignored))
+      );
+    });
+  },
+};
+
+function createDockerGrepToolDefinition(cwd: string): ToolDefinition {
+  const definition = createGrepToolDefinition(cwd);
+  return {
+    ...definition,
+    async execute(_toolCallId: string, params: GrepToolInput, signal?: AbortSignal): Promise<{
+      content: Array<{ type: "text"; text: string }>;
+      details: GrepToolDetails | undefined;
+    }> {
+      requireDockerFileRouting();
+      if (signal?.aborted) throw new Error("Operation aborted");
+      const searchPath = nodePath.resolve(cwd, params.path || ".");
+      const files = await dockerProjectFiles(localCwd, searchPath);
+      const selected = params.glob
+        ? files.filter((entry) => matchesToolGlob(nodePath.relative(searchPath, entry), params.glob!))
+        : files;
+      if (selected.length === 0) {
+        return { content: [{ type: "text", text: "No matches found" }], details: undefined };
+      }
+      const result = await dockerGrepFiles(localCwd, selected, {
+        pattern: params.pattern,
+        literal: params.literal,
+        ignoreCase: params.ignoreCase,
+        context: params.context,
+        signal,
+      });
+      // grep's 1 means no matches. GNU xargs maps that to 123, which the
+      // adapter normalizes back to 1 before this point.
+      if (result.exitCode === 1) {
+        return { content: [{ type: "text", text: "No matches found" }], details: undefined };
+      }
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr.toString("utf8").trim() || `Docker grep exited with code ${result.exitCode}.`);
+      }
+
+      const effectiveLimit = Math.max(1, params.limit ?? 100);
+      const outputLines: string[] = [];
+      let matchCount = 0;
+      let matchLimitReached = false;
+      for (const rawLine of result.stdout.toString("utf8").replace(/\r\n/g, "\n").split("\n")) {
+        if (!rawLine) continue;
+        const line = rawLine.replace(/^\/workspace\//, "");
+        if (/^.+:\d+:/.test(line)) {
+          if (matchCount >= effectiveLimit) {
+            matchLimitReached = true;
+            break;
+          }
+          matchCount++;
+        }
+        outputLines.push(line);
+      }
+      if (matchCount === 0) {
+        return { content: [{ type: "text", text: "No matches found" }], details: undefined };
+      }
+      const truncation = truncateHead(outputLines.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+      const details: GrepToolDetails = {};
+      const notices: string[] = [];
+      if (matchLimitReached) {
+        details.matchLimitReached = effectiveLimit;
+        notices.push(`${effectiveLimit} matches limit reached`);
+      }
+      if (truncation.truncated) {
+        details.truncation = truncation;
+        notices.push(`${formatSize(truncation.maxBytes ?? 0)} limit reached`);
+      }
+      let output = truncation.content;
+      if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
+      return { content: [{ type: "text", text: output }], details: Object.keys(details).length > 0 ? details : undefined };
+    },
+  } as unknown as ToolDefinition;
+}
+
 /**
- * 世界路由版 bash/read/write/edit。以 customTools 注册后按名覆盖内建
- * 工具（pi 的注册表后写者胜），schema 与渲染保持内建原样。
+ * 世界路由版工具。Docker 会额外覆盖 grep/find/ls，使文件枚举与内容
+ * 搜索也面向同一个私有 task volume，而不是宿主 worktree。
  */
 export function buildWorldToolDefinitions(cwd: string): ToolDefinition[] {
   localCwd = cwd;
-  return [
+  const definitions: ToolDefinition[] = [
     createBashToolDefinition(cwd, { operations: worldBashOperations }) as unknown as ToolDefinition,
     createReadToolDefinition(cwd, { operations: readOps }) as unknown as ToolDefinition,
     createWriteToolDefinition(cwd, { operations: writeOps }) as unknown as ToolDefinition,
     createEditToolDefinition(cwd, { operations: editOps }) as unknown as ToolDefinition,
   ];
+  if (dockerWorkspaceRoutingActive()) {
+    definitions.push(
+      createLsToolDefinition(cwd, { operations: dockerLsOps }) as unknown as ToolDefinition,
+      createFindToolDefinition(cwd, { operations: dockerFindOps }) as unknown as ToolDefinition,
+      createDockerGrepToolDefinition(cwd),
+    );
+  }
+  return definitions;
 }

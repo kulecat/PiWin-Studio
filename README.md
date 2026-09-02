@@ -37,7 +37,7 @@
 
 **PiWin Studio** is a desktop workbench based on the [Pi Agent Harness](https://github.com/earendil-works/pi). It preserves Bivor's Electron/Pi SDK foundation while adding Windows packaging, PowerShell execution compatibility, Docker-restricted command execution, and an audit layer.
 
-The Windows slice provides an NSIS build target, PowerShell as the local terminal and one-shot command runner, standard Windows Chrome/Edge discovery, and an explicit Docker command profile with default-deny networking, resource limits, and private task-copy patch import. WSL2 containment, all-file-tool routing, and durable multi-agent recovery are tracked in [docs/windows-port.md](docs/windows-port.md).
+The Windows slice provides an NSIS build target, PowerShell as the local terminal and one-shot command runner, standard Windows Chrome/Edge discovery, and an explicit Docker tool profile with default-deny networking, resource limits, unified first-party file-tool routing, and private task-copy patch import. WSL2 containment and durable multi-agent recovery are tracked in [docs/windows-port.md](docs/windows-port.md).
 
 Each chat runs the pi SDK (`AgentSessionRuntime`) inside its own isolated Electron utility process. Sessions, auth, skills, prompts, and MCP config are fully shared with the pi CLI under `~/.pi/agent/`, so you can move between the terminal and the desktop app freely.
 
@@ -86,7 +86,7 @@ Pick how much power each chat gets — presets gate tools and UI surfaces:
 - **Execution worlds** — built-in bash/read/write/edit run either locally or inside a cloud VM (`set_execution_world`)
 - **Cloud VM sandbox (E2B)** — full desktop VM with live screen streaming, `vm_gui` mouse/keyboard control, `vm_file` transfer, `vm_screenshot`
 - **Local sandbox** — macOS seatbelt profiles: `off` / `workspace` / `strict`
-- **Restricted Docker commands (Windows)** — explicit opt-in, default-deny network, read-only container root, dropped capabilities, process/CPU/memory limits, a `readonly` inspection mode, and a private-volume writable task mode
+- **Restricted Docker tools (Windows)** — explicit opt-in, default-deny network, read-only container root, dropped capabilities, process/CPU/memory limits; `bash/read/write/edit/grep/find/ls` share a read-only or task-private volume, with reviewed patch import before host changes
 - **Subagents** — `subagent_run` spawns up to 4 parallel workers (optionally readonly or VM-bound), monitored in a dock
 - **Browser** — headed Chrome/Edge automation via puppeteer-core with a persistent profile
 - **Web** — Tavily-powered `web_search` plus keyless `web_fetch` (page → markdown)
