@@ -160,3 +160,47 @@ export function appendPolicyAudit(event: PolicyEventPayload): void {
       active.previousHash = hash;
     });
 }
+
+/**
+ * Record a Docker proxy decision without retaining full URLs, headers, bodies,
+ * or credentials. The proxy itself only emits a DNS host, port, HTTP method,
+ * a small fixed reason, and (when known) an HTTP status.
+ */
+export function appendNetworkAudit(event: {
+  decision: "allowed" | "denied";
+  host: string;
+  port: number;
+  method: string;
+  reason?: string;
+  statusCode?: number;
+}): void {
+  if (!context) return;
+  const active = context;
+  writeQueue = writeQueue
+    .catch(() => {
+      // A failed prior write must not prevent a later event from being tried.
+    })
+    .then(async () => {
+      const entry = {
+        schemaVersion: 1,
+        id: randomUUID(),
+        event: "network_request",
+        recordedAt: new Date().toISOString(),
+        sessionId: active.sessionId,
+        workspace: active.cwd,
+        target: {
+          host: event.host.slice(0, 253),
+          port: event.port,
+          method: event.method.slice(0, 16),
+        },
+        decision: event.decision,
+        reason: event.reason?.slice(0, 80),
+        statusCode: event.statusCode,
+        previousHash: active.previousHash,
+      };
+      const hash = sha256(JSON.stringify(entry));
+      await mkdir(dirname(active.logPath), { recursive: true });
+      await appendFile(active.logPath, `${JSON.stringify({ ...entry, hash })}\n`, "utf8");
+      active.previousHash = hash;
+    });
+}

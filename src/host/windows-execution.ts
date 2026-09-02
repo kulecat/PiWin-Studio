@@ -12,6 +12,7 @@
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { delimiter, join } from "node:path";
+import { dockerEgressInvocationArgs } from "./docker-egress";
 import type {
   DockerSandboxProfile,
   ExecutionEnvironmentPayload,
@@ -91,7 +92,11 @@ export function getDockerSandboxProfile(): DockerSandboxProfile {
     process.env[DOCKER_WORKSPACE_ACCESS_ENV]?.trim().toLowerCase() === "readwrite"
       ? "readwrite"
       : "readonly";
-  const network = process.env[DOCKER_NETWORK_ENV]?.trim().toLowerCase() === "allow" ? "allow" : "none";
+  const networkValue = process.env[DOCKER_NETWORK_ENV]?.trim().toLowerCase();
+  // `allow` is retained as the documented compatibility spelling, but it no
+  // longer means a raw bridge attachment. Both values select the allowlist
+  // proxy boundary.
+  const network = networkValue === "allow" || networkValue === "allowlist" ? "allowlist" : "none";
   const memory = validDockerMemory(process.env[DOCKER_MEMORY_ENV]) ?? DEFAULT_DOCKER_MEMORY;
   const cpus = validDockerCpuCount(process.env[DOCKER_CPUS_ENV]) ?? DEFAULT_DOCKER_CPUS;
   const pidsLimit = validDockerPidsLimit(process.env[DOCKER_PIDS_LIMIT_ENV]) ?? DEFAULT_DOCKER_PIDS_LIMIT;
@@ -237,7 +242,7 @@ function checkDocker(): ExecutionRunnerStatus {
       profile.workspaceAccess === "readonly"
         ? "read-only workspace"
         : "private writable task copy";
-    const network = profile.network === "none" ? "network disabled" : "network explicitly allowed";
+    const network = profile.network === "none" ? "network disabled" : "allowlist proxy";
     return {
       kind: "docker",
       available: true,
@@ -291,8 +296,7 @@ function dockerInvocation(command: string, cwd: string): PtyInvocation {
       "--init",
       "--workdir",
       "/workspace",
-      "--network",
-      profile.network === "none" ? "none" : "bridge",
+      ...(profile.network === "none" ? ["--network", "none"] : dockerEgressInvocationArgs()),
       "--read-only",
       "--tmpfs",
       "/tmp:rw,nosuid,nodev,size=512m",

@@ -41,6 +41,9 @@ conservative:
 - in `readwrite` mode, there is no writable host mount: commands receive only
   a task-specific Docker volume at `/workspace`;
 - network access is disabled by default;
+- when networking is explicitly enabled, the agent joins an internal Docker
+  network with no direct internet route. Its only egress peer is a
+  PiWin-created proxy, which permits configured DNS names only;
 - all Linux capabilities are dropped, privilege escalation is disabled, and
   the IPC namespace is isolated;
 - the default limits are 2 GB memory, 2 CPUs, and 128 processes.
@@ -51,6 +54,7 @@ Set these environment variables before launching PiWin Studio:
 $env:PIWIN_EXECUTION_RUNNER = "docker"
 $env:PIWIN_DOCKER_WORKSPACE_ACCESS = "readonly" # default; readwrite needs a fresh PiWin task
 $env:PIWIN_DOCKER_NETWORK = "none"              # set allow only when needed
+$env:PIWIN_DOCKER_NETWORK_ALLOWLIST = "registry.npmjs.org,api.github.com"
 $env:PIWIN_DOCKER_MEMORY = "2g"
 $env:PIWIN_DOCKER_CPUS = "2"
 $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
@@ -68,6 +72,30 @@ mount.
 The default image is `node:22-bookworm` because this workflow needs Git. A
 custom `PIWIN_DOCKER_IMAGE` must provide `sh`, `git`, `grep`, `find`,
 `realpath`, `xargs`, and a non-root `node` user (UID 1000).
+
+### Network allowlist proxy
+
+`PIWIN_DOCKER_NETWORK=none` remains the default. To permit a narrowly scoped
+network task, set `PIWIN_DOCKER_NETWORK=allow` (or `allowlist`) **and** provide
+one or more comma-separated DNS names in `PIWIN_DOCKER_NETWORK_ALLOWLIST`.
+Exact names such as `registry.npmjs.org` and a left-most wildcard such as
+`*.githubusercontent.com` are accepted. IP addresses, `localhost`, arbitrary
+ports, and empty allowlists are rejected.
+
+PiWin creates an ephemeral, internal Docker network for the agent and a
+separate constrained proxy container. The agent has no direct default route;
+only the proxy has an external bridge attachment. It resolves an allowlisted
+name to a public IPv4 address before connecting, so a hostname cannot be used
+to reach loopback, private, link-local, or Docker-internal addresses. Standard
+`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` variables point at that proxy.
+Unsetting those variables does not restore direct egress because the workload
+is still attached only to the internal network.
+
+The per-session JSONL audit includes one `network_request` entry per proxy
+decision: DNS host, port, HTTP method, allow/deny decision, fixed denial reason
+and, when available, HTTP status. It deliberately excludes URL paths, query
+strings, headers, bodies, and credentials. The proxy and its internal network
+are removed when the agent host shuts down.
 
 This is a first-party **tool-execution** boundary, not a claim that all Agent
 behavior is isolated. In the default `PIWIN_DOCKER_HOST_TOOLS=deny` mode,
@@ -133,9 +161,9 @@ chat process cannot recreate a removed volume: it is stopped at the next Docker
 command, so after import the user should prepare review and then create a new
 task for additional work.
 
-This does not make an opt-in extension or MCP tool sandboxed. Network
-allowlists, per-destination audit, and credential isolation remain later
-phases.
+This does not make an opt-in extension or MCP tool sandboxed. Credential
+isolation, transport policy beyond HTTP(S), and third-party tool routing remain
+later phases.
 
 ## Execution audit log
 
@@ -143,9 +171,11 @@ Each agent host appends one JSON Lines file per session at
 `.piwin/audit/<chat-id>.jsonl` in the active workspace. Set
 `PIWIN_AUDIT_DIR` before launch to store these files elsewhere.
 
-Each entry includes the timestamp, workspace, local/VM world, runner,
+Each command entry includes the timestamp, workspace, local/VM world, runner,
 command program name, command byte length, SHA-256 command fingerprint,
 timeout, duration, exit result, and a hash-chain link to the preceding entry.
+Docker allowlist decisions appear as separate `network_request` entries and
+record only host/port/method/decision metadata.
 Raw command text is intentionally not stored because shell commands often
 contain tokens or credentials.
 
@@ -163,6 +193,6 @@ with the recovery layer.
 The Docker restricted tool profile is the first Windows containment layer.
 Native PowerShell and WSL2 are convenience runners and must always be visibly
 marked as host execution in the UI and audit log. Docker task-private copies
-now provide a unified first-party file and command boundary; network allowlists,
-credential isolation, third-party tool routing, and durable recovery remain
-planned.
+now provide a unified first-party file and command boundary plus a
+domain-allowlisted HTTP(S) egress path; credential isolation, third-party tool
+routing, and durable recovery remain planned.

@@ -138,13 +138,13 @@ export const en: Messages = {
     dockerWorkspaceReadonly: "Read-only (write / edit disabled)",
     dockerWorkspaceReadwrite: "Writable private task copy",
     dockerNetworkNone: "Disabled (default)",
-    dockerNetworkAllow: "Explicitly allowed",
+    dockerNetworkAllow: "Allowlist proxy (explicit)",
     dockerSandboxControls:
       "The container root filesystem is read-only, Linux capabilities are dropped, privilege escalation and IPC sharing are disabled, and writable paths are temporary.",
     dockerSandboxScope:
-      "Docker routes Pi's built-in bash/read/write/edit/grep/find/ls tools through one task-private volume, then imports a reviewed patch. Host-side extensions and MCP tools are not loaded by default.",
+      "Docker routes Pi's built-in bash/read/write/edit/grep/find/ls tools through one task-private volume, then imports a reviewed patch. Host-side extensions and MCP tools are not loaded by default; optional network access uses a domain allowlist proxy.",
     dockerSandboxConfig:
-      "Set before launch: PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite (readonly is default), PIWIN_DOCKER_NETWORK=none|allow. Writable mode needs a fresh PiWin task worktree. PIWIN_DOCKER_MEMORY, PIWIN_DOCKER_CPUS, and PIWIN_DOCKER_PIDS_LIMIT adjust limits.",
+      "Set before launch: PIWIN_DOCKER_WORKSPACE_ACCESS=readonly|readwrite (readonly is default), PIWIN_DOCKER_NETWORK=none|allow, and PIWIN_DOCKER_NETWORK_ALLOWLIST=domain1,domain2 when networking is needed. Writable mode needs a fresh PiWin task worktree. PIWIN_DOCKER_MEMORY, PIWIN_DOCKER_CPUS, and PIWIN_DOCKER_PIDS_LIMIT adjust limits.",
     sandboxTitle: "Cloud VM (E2B)",
     sandboxIntro:
       "Each task can have its own cloud Linux desktop VM. After switching the execution world to VM, you can watch the desktop live and take over.",

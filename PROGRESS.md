@@ -199,6 +199,31 @@ and recoverable worktree-based agent tasks.
   allowlists, destination-level auditing, and credential isolation are the
   next containment phase.
 
+### 2026-09-02 — Docker network allowlist proxy and audit
+
+- Added `src/host/docker-egress.ts`. With the default
+  `PIWIN_DOCKER_NETWORK=none`, Docker remains fully disconnected. Setting
+  `PIWIN_DOCKER_NETWORK=allow` (or `allowlist`) now requires a non-empty
+  `PIWIN_DOCKER_NETWORK_ALLOWLIST`; it no longer gives the agent a raw bridge
+  network.
+- Each agent host creates a short-lived internal Docker network for its
+  workload plus a separately constrained proxy container. The agent network
+  has no direct internet route; the proxy is its only peer and has the sole
+  external bridge attachment. Unsetting proxy environment variables cannot
+  restore direct egress.
+- The proxy accepts exact DNS names and left-most wildcards, rejects IP and
+  localhost targets, permits only ports 80/443, and resolves an allowlisted
+  host to a public IPv4 address before connecting. This prevents an allowlisted
+  hostname from being used as a route to local, private, link-local, or Docker
+  addresses.
+- Added hash-chained `network_request` audit entries containing only host,
+  port, method, allow/deny decision, fixed reason, and available HTTP status.
+  URL paths, query strings, headers, bodies, and credentials are not logged.
+- Ran a real Docker smoke test: an allowlisted `example.com` HTTPS CONNECT
+  succeeded, `example.org` was denied, a direct public TCP connection from the
+  internal agent network failed, and both proxy decisions appeared in the audit
+  log. The test proxy container and internal network were removed afterwards.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin

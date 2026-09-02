@@ -93,8 +93,8 @@ export interface DockerSandboxProfile {
   image: string;
   /** readonly mounts the host workspace read-only; readwrite uses a private Docker task copy. */
   workspaceAccess: "readonly" | "readwrite";
-  /** none is the safe default; allow must be selected explicitly. */
-  network: "none" | "allow";
+  /** none is the safe default; allowlist routes only configured domains through PiWin's proxy. */
+  network: "none" | "allowlist";
   memory: string;
   cpus: string;
   pidsLimit: number;

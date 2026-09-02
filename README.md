@@ -86,7 +86,7 @@ Pick how much power each chat gets — presets gate tools and UI surfaces:
 - **Execution worlds** — built-in bash/read/write/edit run either locally or inside a cloud VM (`set_execution_world`)
 - **Cloud VM sandbox (E2B)** — full desktop VM with live screen streaming, `vm_gui` mouse/keyboard control, `vm_file` transfer, `vm_screenshot`
 - **Local sandbox** — macOS seatbelt profiles: `off` / `workspace` / `strict`
-- **Restricted Docker tools (Windows)** — explicit opt-in, default-deny network, read-only container root, dropped capabilities, process/CPU/memory limits; `bash/read/write/edit/grep/find/ls` share a read-only or task-private volume, with reviewed patch import before host changes. Host-side extensions/MCP are not loaded by default; trusted opt-ins require a per-call approval and audit record
+- **Restricted Docker tools (Windows)** — explicit opt-in, default-deny network, read-only container root, dropped capabilities, process/CPU/memory limits; `bash/read/write/edit/grep/find/ls` share a read-only or task-private volume, with reviewed patch import before host changes. Optional networking is forced through a DNS allowlist proxy with per-request audit records. Host-side extensions/MCP are not loaded by default; trusted opt-ins require a per-call approval and audit record
 - **Subagents** — `subagent_run` spawns up to 4 parallel workers (optionally readonly or VM-bound), monitored in a dock
 - **Browser** — headed Chrome/Edge automation via puppeteer-core with a persistent profile
 - **Web** — Tavily-powered `web_search` plus keyless `web_fetch` (page → markdown)

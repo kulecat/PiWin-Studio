@@ -77,6 +77,8 @@ import { buildWebTools } from "./web";
 import { buildBrowserTool, closeBrowser } from "./browser";
 import { buildDeployTool } from "./deploy";
 import { appendPolicyAudit, configureAuditLog } from "./audit";
+import { ensureDockerEgressProxy, stopDockerEgressProxy } from "./docker-egress";
+import { getDockerSandboxProfile, isDockerHostWriteBlocked } from "./windows-execution";
 import {
   allowExternalDockerTools,
   canAgentActivateDockerTool,
@@ -607,6 +609,9 @@ async function init(msg: HostInit): Promise<void> {
   }
 
   try {
+    if (isDockerHostWriteBlocked() && getDockerSandboxProfile().network === "allowlist") {
+      await ensureDockerEgressProxy(chatId);
+    }
     const createRuntime: CreateAgentSessionRuntimeFactory = async (args) => {
       const services = await createAgentSessionServices({
         cwd: args.cwd,
@@ -789,6 +794,9 @@ async function init(msg: HostInit): Promise<void> {
       send({ type: "sandbox", sandbox: currentSandboxStatus() });
     }
   } catch (err) {
+    // If setup failed after creating the optional egress runtime, do not leave
+    // an idle proxy/network behind for a session that never became usable.
+    await stopDockerEgressProxy();
     send({ type: "init_error", message: err instanceof Error ? err.message : String(err) });
   }
 }
@@ -1112,6 +1120,7 @@ async function gracefulShutdown(): Promise<void> {
     await abortAllSubagents();
     await closeBrowser();
     await destroySandbox();
+    await stopDockerEgressProxy();
   } catch {
     // best effort
   }
