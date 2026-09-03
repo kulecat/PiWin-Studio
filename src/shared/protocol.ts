@@ -100,12 +100,22 @@ export interface DockerSandboxProfile {
   pidsLimit: number;
 }
 
+/** Selected WSL2 launch parameters. WSL is a Linux execution environment, not a sandbox boundary. */
+export interface WslExecutionProfile {
+  /** Omitted means the user's default WSL distribution. */
+  distribution?: string;
+  /** Linux mount root used to map Windows drive paths, normally `/mnt`. */
+  mountRoot: string;
+}
+
 /** Current local-execution selection plus live prerequisite checks. */
 export interface ExecutionEnvironmentPayload {
   platform: NodeJS.Platform;
   configuredRunner: "auto" | WindowsExecutionRunner;
   effectiveRunner: Exclude<ExecutionRunner, "auto">;
   runners: ExecutionRunnerStatus[];
+  /** Present on Windows. Describes WSL launch/mapping behavior, not containment. */
+  wsl?: WslExecutionProfile;
   /** Present on Windows. Applies only when the Docker runner is selected. */
   dockerSandbox?: DockerSandboxProfile;
 }
@@ -342,6 +352,12 @@ export interface AppConfigPayload {
   appMode?: ChatKind;
   /** UI + agent reply language. */
   locale?: "zh" | "en";
+  /** Preferred local / WSL runner for newly created agent sessions; Docker keeps its explicit environment profile. Null clears this setting in a patch. */
+  executionRunner?: "auto" | "powershell" | "wsl" | null;
+  /** Optional WSL distribution name; omitted uses the user's default distribution. Null clears this setting in a patch. */
+  wslDistribution?: string | null;
+  /** Optional WSL automount root, normally `/mnt`. Null clears this setting in a patch. */
+  wslMountRoot?: string | null;
 }
 
 export type VercelTestResult =

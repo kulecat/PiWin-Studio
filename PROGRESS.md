@@ -309,6 +309,23 @@ and recoverable worktree-based agent tasks.
   never locks a path, assigns work automatically, or replaces Git conflict
   handling.
 
+### 2026-09-03 — Configurable WSL2 routing and PowerShell host gate
+
+- Added a saved local execution preference for new agent sessions: preserve
+  the launch environment, automatic selection, WSL2, or PowerShell. Keeping
+  **Use launch environment** leaves an explicit Docker startup profile intact.
+- A WSL2 preference can select a distribution and Windows-drive mount root.
+  PiWin validates the selected distribution, requires a successful command in
+  a real WSL2 kernel, and opens the workspace through `wsl.exe --cd` using a
+  deterministic Windows-to-WSL path mapping.
+- The active local runner is now a visible security decision: when it resolves
+  to PowerShell, every agent `bash` call—including `pi.bash(...)` in code
+  mode—requires human approval. The decision enters the existing policy audit,
+  and the subsequent execution retains its normal runner audit record.
+- This does **not** call WSL2 a sandbox. The selected Linux distribution still
+  receives a mapped host project directory; Docker remains the first supported
+  containment boundary for PiWin's first-party tools.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -351,6 +368,10 @@ and recoverable worktree-based agent tasks.
   ledger: directory/file path-claim overlap, observed changed-path reporting,
   and durable creation/claim/review event records all passed
   (`TASK_GOVERNANCE_SMOKE_OK`).
+- Ran a compiled WSL routing smoke test against the provisioned Ubuntu WSL2
+  instance: saved config application, `E:\piwin-studio\bivor-main` to
+  `/mnt/e/piwin-studio/bivor-main` mapping, WSL2 kernel readiness, and the
+  PowerShell host-approval rule all passed (`WSL_ROUTING_SMOKE_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -373,7 +394,7 @@ and recoverable worktree-based agent tasks.
 
 ## Known limitations / blockers
 
-- WSL now works, but it warns that a Windows `localhost` proxy is not mirrored
+- WSL2 routing now works, but it warns that a Windows `localhost` proxy is not mirrored
   into WSL NAT mode. This does not affect the verified Docker profile; configure
   a reachable proxy inside WSL only if a Linux-side tool needs outbound access.
 - The generated installer is not Authenticode-signed. Windows may show an
@@ -381,25 +402,27 @@ and recoverable worktree-based agent tasks.
   configured.
 - The packaged desktop UI has not yet had a manual end-to-end smoke test on a
   clean user profile.
-- The current local PowerShell runner is a convenience runner, not a security
-  boundary. Docker covers Pi's built-in command and file tools, but WSL2
-  containment, network policy, and third-party extension/MCP routing remain
-  pending.
+- PowerShell requires agent-call approval but is still a convenience runner,
+  not a security boundary. WSL2 routing also is not containment: it maps the
+  host project into Linux. Docker covers Pi's built-in command and file tools;
+  WSL2 containment, WSL network policy, and third-party extension/MCP routing
+  remain pending.
 
 ## Next work
 
-1. Add a Docker proxy sidecar with domain allowlists and privacy-preserving
-   request audit, while keeping network disabled by default.
-2. Add checkpoint references and a read-only audit viewer, including private
-   patch-import lifecycle events.
-3. Extend the existing allow / ask / deny gate with workspace-path and network
-   destination rules.
+1. Add checkpoint references and a read-only audit viewer, including Docker
+   private-patch lifecycle events and task-ledger links.
+2. Define and test a WSL2 containment profile; do not expose it as a sandbox
+   until filesystem and network boundaries are independently verified.
+3. Extend the non-Docker policy layer with destination-specific network rules
+   and controlled routing for third-party extensions/MCP tools.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
    experimental after all built-in tool routes are verified.
-5. Add WSL2 containment profiles and explicit host-execution confirmation.
-6. Add explicit task-to-agent assignment and a multi-task audit export; the
+5. Add explicit task-to-agent assignment and a multi-task audit export; the
    current local ledger and path claims are deliberately conservative and do
    not auto-resolve conflicts or resume an agent process.
+6. Complete a manual desktop UI smoke test on a clean profile and establish a
+   signed Windows release workflow.
 
 ## Working agreement
 

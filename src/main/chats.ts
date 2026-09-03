@@ -14,6 +14,7 @@ import type {
 } from "@shared/protocol";
 import { IPC } from "@shared/protocol";
 import { getConfig } from "./config";
+import { applyExecutionConfig } from "../host/windows-execution";
 import { markAgentExiting, trackAgentProcess } from "./agent-monitor";
 import { mt } from "./i18n";
 
@@ -38,7 +39,7 @@ function forkHost(
     serviceName,
     cwd,
     env: {
-      ...process.env,
+      ...applyExecutionConfig(process.env, getConfig()),
       ...(getConfig().e2bApiKey ? { E2B_API_KEY: getConfig().e2bApiKey } : {}),
       ...(getConfig().tavilyApiKey ? { TAVILY_API_KEY: getConfig().tavilyApiKey } : {}),
       ...(getConfig().vercelToken ? { VERCEL_TOKEN: getConfig().vercelToken } : {}),

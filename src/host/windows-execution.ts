@@ -15,9 +15,11 @@ import { delimiter, join } from "node:path";
 import { dockerEgressInvocationArgs } from "./docker-egress";
 import { resolveDockerCredentialValues, type DockerCredentialValue } from "./docker-credential-policy";
 import type {
+  AppConfigPayload,
   DockerSandboxProfile,
   ExecutionEnvironmentPayload,
   ExecutionRunnerStatus,
+  WslExecutionProfile,
   WindowsExecutionRunner,
 } from "@shared/protocol";
 
@@ -33,6 +35,8 @@ export interface PtyInvocation {
 }
 
 const RUNNER_ENV = "PIWIN_EXECUTION_RUNNER";
+const WSL_DISTRIBUTION_ENV = "PIWIN_WSL_DISTRIBUTION";
+const WSL_MOUNT_ROOT_ENV = "PIWIN_WSL_MOUNT_ROOT";
 const DOCKER_IMAGE_ENV = "PIWIN_DOCKER_IMAGE";
 const DOCKER_WORKSPACE_ACCESS_ENV = "PIWIN_DOCKER_WORKSPACE_ACCESS";
 const DOCKER_WORKSPACE_VOLUME_ENV = "PIWIN_DOCKER_WORKSPACE_VOLUME";
@@ -48,12 +52,18 @@ const DEFAULT_DOCKER_MEMORY = "2g";
 const DEFAULT_DOCKER_CPUS = "2";
 const DEFAULT_DOCKER_PIDS_LIMIT = 128;
 
+interface WslSettings {
+  distribution?: string;
+  mountRoot: string;
+  error?: string;
+}
+
 interface WslProbe {
   available: boolean;
   detail: string;
 }
 
-let cachedWslProbe: WslProbe | undefined;
+const cachedWslProbes = new Map<string, WslProbe>();
 
 function executableOnPath(name: string): boolean {
   if (process.platform !== "win32") return false;
@@ -61,10 +71,59 @@ function executableOnPath(name: string): boolean {
   return entries.some((entry) => existsSync(join(entry, name)));
 }
 
-function configuredRunner(): "auto" | WindowsRunnerKind {
-  const value = process.env[RUNNER_ENV]?.trim().toLowerCase();
+function configuredRunner(environment: NodeJS.ProcessEnv = process.env): "auto" | WindowsRunnerKind {
+  const value = environment[RUNNER_ENV]?.trim().toLowerCase();
   if (value === "powershell" || value === "wsl" || value === "docker") return value;
   return "auto";
+}
+
+function validWslDistribution(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+  return normalized.length <= 120 && !/[\0\r\n]/.test(normalized) ? normalized : undefined;
+}
+
+function validWslMountRoot(value: string | undefined): string | undefined {
+  const withForwardSlashes = value?.trim().replaceAll("\\", "/");
+  const normalized = withForwardSlashes === "/" ? "/" : withForwardSlashes?.replace(/\/+$/, "");
+  if (!normalized || !normalized.startsWith("/")) return undefined;
+  if (normalized.split("/").some((segment) => segment === "..")) return undefined;
+  return normalized.length <= 120 ? normalized : undefined;
+}
+
+function wslSettings(environment: NodeJS.ProcessEnv = process.env): WslSettings {
+  const requestedDistribution = environment[WSL_DISTRIBUTION_ENV]?.trim();
+  const requestedMountRoot = environment[WSL_MOUNT_ROOT_ENV]?.trim();
+  if (requestedDistribution && !validWslDistribution(requestedDistribution)) {
+    return { mountRoot: "/mnt", error: "PIWIN_WSL_DISTRIBUTION contains an invalid distribution name" };
+  }
+  if (requestedMountRoot && !validWslMountRoot(requestedMountRoot)) {
+    return { mountRoot: "/mnt", error: "PIWIN_WSL_MOUNT_ROOT must be an absolute Linux path without .." };
+  }
+  return {
+    distribution: validWslDistribution(requestedDistribution),
+    mountRoot: validWslMountRoot(requestedMountRoot) ?? "/mnt",
+  };
+}
+
+/** Apply desktop preferences to a new agent-process environment. */
+export function applyExecutionConfig(
+  environment: NodeJS.ProcessEnv,
+  config: Pick<AppConfigPayload, "executionRunner" | "wslDistribution" | "wslMountRoot">,
+): NodeJS.ProcessEnv {
+  const next = { ...environment };
+  if (config.executionRunner) next[RUNNER_ENV] = config.executionRunner;
+  if (config.wslDistribution !== undefined) {
+    const distribution = config.wslDistribution?.trim();
+    if (distribution) next[WSL_DISTRIBUTION_ENV] = distribution;
+    else delete next[WSL_DISTRIBUTION_ENV];
+  }
+  if (config.wslMountRoot !== undefined) {
+    const mountRoot = config.wslMountRoot?.trim();
+    if (mountRoot) next[WSL_MOUNT_ROOT_ENV] = mountRoot;
+    else delete next[WSL_MOUNT_ROOT_ENV];
+  }
+  return next;
 }
 
 function validDockerMemory(value: string | undefined): string | undefined {
@@ -166,13 +225,27 @@ function requireReadonlyCredentialSnapshotVolume(): string {
   );
 }
 
-function probeWsl(): WslProbe {
-  if (cachedWslProbe) return cachedWslProbe;
+function wslArgs(settings: WslSettings): string[] {
+  return settings.distribution ? ["--distribution", settings.distribution] : [];
+}
+
+function probeWsl(environment: NodeJS.ProcessEnv = process.env): WslProbe {
+  const settings = wslSettings(environment);
+  const cacheKey = `${settings.distribution ?? "<default>"}\n${settings.mountRoot}\n${settings.error ?? ""}`;
+  const cached = cachedWslProbes.get(cacheKey);
+  if (cached) return cached;
+  if (settings.error) {
+    const probe = { available: false, detail: settings.error };
+    cachedWslProbes.set(cacheKey, probe);
+    return probe;
+  }
   if (!executableOnPath("wsl.exe")) {
-    return (cachedWslProbe = {
+    const probe = {
       available: false,
       detail: "WSL command was not found",
-    });
+    };
+    cachedWslProbes.set(cacheKey, probe);
+    return probe;
   }
 
   const distributions = spawnSync("wsl.exe", ["-l", "-q"], {
@@ -182,36 +255,57 @@ function probeWsl(): WslProbe {
   });
   const distributionNames = distributions.stdout?.replaceAll("\0", "").trim();
   if (distributions.status !== 0 || !distributionNames) {
-    return (cachedWslProbe = {
+    const probe = {
       available: false,
       detail: "Install a WSL2 Linux distribution with `wsl --install`",
-    });
+    };
+    cachedWslProbes.set(cacheKey, probe);
+    return probe;
+  }
+  const knownDistributions = distributionNames.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+  if (settings.distribution && !knownDistributions.includes(settings.distribution)) {
+    const probe = {
+      available: false,
+      detail: `WSL distribution “${settings.distribution}” was not found`,
+    };
+    cachedWslProbes.set(cacheKey, probe);
+    return probe;
   }
 
   // Listing distributions alone is not enough: a partially initialized WSL
   // setup can list Ubuntu but hang as soon as it starts a Linux command. Auto
   // mode must prove that a minimal command completes before routing agent tools
   // to WSL, otherwise PowerShell is the predictable Windows fallback.
-  const readiness = spawnSync("wsl.exe", ["--exec", "sh", "-lc", "printf piwin-wsl-ready"], {
+  const readiness = spawnSync(
+    "wsl.exe",
+    [...wslArgs(settings), "--exec", "sh", "-lc", "printf 'piwin-wsl-ready:%s' \"$(uname -r)\""],
+    {
     encoding: "utf8",
     timeout: 2_500,
     windowsHide: true,
-  });
-  if (readiness.status === 0 && readiness.stdout?.trim() === "piwin-wsl-ready") {
-    return (cachedWslProbe = {
+    },
+  );
+  const kernel = readiness.stdout?.trim().replace(/^piwin-wsl-ready:/, "");
+  if (readiness.status === 0 && kernel && /wsl2/i.test(kernel)) {
+    const distribution = settings.distribution ? `WSL2 ${settings.distribution}` : "default WSL2 distribution";
+    const probe = {
       available: true,
-      detail: "WSL2 runner for POSIX agent commands",
-    });
+      detail: `${distribution} · workspace drives map below ${settings.mountRoot}`,
+    };
+    cachedWslProbes.set(cacheKey, probe);
+    return probe;
   }
 
-  return (cachedWslProbe = {
+  const probe = {
     available: false,
-    detail: "A WSL distribution was found, but its test command did not finish; auto mode will use PowerShell",
-  });
+    detail: "A WSL distribution was found, but its WSL2 readiness test did not finish; auto mode will use PowerShell",
+  };
+  cachedWslProbes.set(cacheKey, probe);
+  return probe;
 }
 
-function wslReady(): boolean {
-  return probeWsl().available;
+function wslReady(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return probeWsl(environment).available;
 }
 
 function compactProcessError(value: string | undefined): string | undefined {
@@ -219,8 +313,8 @@ function compactProcessError(value: string | undefined): string | undefined {
   return compact ? compact.slice(0, 160) : undefined;
 }
 
-function checkPowerShell(): ExecutionRunnerStatus {
-  const shell = process.env.PIWIN_SHELL || "powershell.exe";
+function checkPowerShell(environment: NodeJS.ProcessEnv = process.env): ExecutionRunnerStatus {
+  const shell = environment.PIWIN_SHELL || "powershell.exe";
   const result = spawnSync(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"], {
     encoding: "utf8",
     timeout: 2_000,
@@ -267,24 +361,27 @@ function checkDocker(): ExecutionRunnerStatus {
   };
 }
 
-function windowsPathToWsl(cwd: string): string {
+/** Map a Windows drive path to the selected WSL automount root. */
+export function windowsPathToWsl(cwd: string, mountRoot = "/mnt"): string {
   const match = /^([a-z]):[\\/](.*)$/i.exec(cwd);
   if (!match) return cwd.replaceAll("\\", "/");
-  return `/mnt/${match[1].toLowerCase()}/${match[2].replaceAll("\\", "/")}`;
+  return `${mountRoot}/${match[1].toLowerCase()}/${match[2].replaceAll("\\", "/")}`;
 }
 
-function powerShellInvocation(command: string): PtyInvocation {
+function powerShellInvocation(command: string, environment: NodeJS.ProcessEnv = process.env): PtyInvocation {
   return {
-    file: process.env.PIWIN_SHELL || "powershell.exe",
+    file: environment.PIWIN_SHELL || "powershell.exe",
     args: ["-NoLogo", "-NoProfile", "-Command", command],
     runner: "powershell",
   };
 }
 
-function wslInvocation(command: string, cwd: string): PtyInvocation {
+function wslInvocation(command: string, cwd: string, environment: NodeJS.ProcessEnv = process.env): PtyInvocation {
+  const settings = wslSettings(environment);
+  if (settings.error) throw new Error(settings.error);
   return {
     file: "wsl.exe",
-    args: ["--cd", windowsPathToWsl(cwd), "--", "bash", "-lc", command],
+    args: [...wslArgs(settings), "--cd", windowsPathToWsl(cwd, settings.mountRoot), "--", "bash", "-lc", command],
     runner: "wsl",
   };
 }
@@ -376,6 +473,20 @@ export function resolveDockerCredentialInvocation(
   return dockerInvocation(command, resolveDockerCredentialValues(credentialNames));
 }
 
+/** Resolve a runner without constructing a command or touching Docker volumes. */
+export function effectiveLocalRunner(environment: NodeJS.ProcessEnv = process.env): LocalRunnerKind {
+  if (process.platform !== "win32") return "posix";
+  const requested = configuredRunner(environment);
+  if (requested === "docker" || requested === "wsl" || requested === "powershell") return requested;
+  return wslReady(environment) ? "wsl" : "powershell";
+}
+
+/** PowerShell executes directly in the Windows user environment, never in a sandbox. */
+export function hostPowerShellApprovalRule(environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (effectiveLocalRunner(environment) !== "powershell") return undefined;
+  return "Windows PowerShell will run directly on the host user environment (not inside Docker or a WSL sandbox).";
+}
+
 /**
  * Route a local tool command. On Windows, auto prefers WSL2 because Pi's
  * built-in bash tools generate POSIX commands. When WSL2 is absent we retain a
@@ -386,18 +497,14 @@ export function resolveLocalPtyInvocation(command: string, cwd: string): PtyInvo
     return { file: "/bin/sh", args: ["-c", command], runner: "posix" };
   }
 
-  const requested = configuredRunner();
-  if (requested === "docker") return dockerInvocation(command);
-  if (requested === "wsl") return wslInvocation(command, cwd);
-  if (requested === "powershell") return powerShellInvocation(command);
-
-  return wslReady()
-    ? wslInvocation(command, cwd)
-    : powerShellInvocation(command);
+  const runner = effectiveLocalRunner();
+  if (runner === "docker") return dockerInvocation(command);
+  if (runner === "wsl") return wslInvocation(command, cwd);
+  return powerShellInvocation(command);
 }
 
 /** A side-effect-free diagnostic suitable for a future Windows setup screen. */
-export function inspectWindowsRunners(): ExecutionRunnerStatus[] {
+export function inspectWindowsRunners(environment: NodeJS.ProcessEnv = process.env): ExecutionRunnerStatus[] {
   if (process.platform !== "win32") {
     return [
       { kind: "powershell", available: false, detail: "Only available on Windows" },
@@ -405,9 +512,9 @@ export function inspectWindowsRunners(): ExecutionRunnerStatus[] {
       { kind: "docker", available: false, detail: "Only available on Windows" },
     ];
   }
-  const wsl = probeWsl();
+  const wsl = probeWsl(environment);
   return [
-    checkPowerShell(),
+    checkPowerShell(environment),
     {
       kind: "wsl",
       available: wsl.available,
@@ -418,23 +525,22 @@ export function inspectWindowsRunners(): ExecutionRunnerStatus[] {
 }
 
 /** Inspect the selected runner and its prerequisites for the setup screen. */
-export function inspectExecutionEnvironment(): ExecutionEnvironmentPayload {
-  const requestedRunner = configuredRunner();
-  const runners = inspectWindowsRunners();
-  const wslAvailable = runners.find((runner) => runner.kind === "wsl")?.available ?? false;
-  const effectiveRunner =
-    process.platform !== "win32"
-      ? "posix"
-      : requestedRunner === "auto"
-        ? wslAvailable
-          ? "wsl"
-          : "powershell"
-        : requestedRunner;
+export function inspectExecutionEnvironment(environment: NodeJS.ProcessEnv = process.env): ExecutionEnvironmentPayload {
+  const requestedRunner = configuredRunner(environment);
+  const runners = inspectWindowsRunners(environment);
+  const settings = wslSettings(environment);
+  const effectiveRunner = effectiveLocalRunner(environment);
   return {
     platform: process.platform,
     configuredRunner: requestedRunner,
     effectiveRunner,
     runners,
+    wsl: process.platform === "win32"
+      ? {
+          distribution: settings.distribution,
+          mountRoot: settings.mountRoot,
+        } satisfies WslExecutionProfile
+      : undefined,
     dockerSandbox: process.platform === "win32" ? getDockerSandboxProfile() : undefined,
   };
 }

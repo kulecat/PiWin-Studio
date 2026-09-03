@@ -35,9 +35,9 @@
 
 > **Provenance:** PiWin Studio is a Windows/WSL2 adaptation derived from [Bivor](https://github.com/ryanlab/bivor), Copyright (c) 2026 ryanlab, under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-**PiWin Studio** is a desktop workbench based on the [Pi Agent Harness](https://github.com/earendil-works/pi). It preserves Bivor's Electron/Pi SDK foundation while adding Windows packaging, PowerShell execution compatibility, Docker-restricted command execution, structural Bash guardrails, and recoverable Git-task review controls.
+**PiWin Studio** is a desktop workbench based on the [Pi Agent Harness](https://github.com/earendil-works/pi). It preserves Bivor's Electron/Pi SDK foundation while adding Windows packaging, configurable PowerShell/WSL2 execution routing, Docker-restricted command execution, structural Bash guardrails, and recoverable Git-task review controls.
 
-The Windows slice provides an NSIS build target, PowerShell as the local terminal and one-shot command runner, standard Windows Chrome/Edge discovery, and an explicit Docker tool profile with default-deny networking, resource limits, unified first-party file-tool routing, and private task-copy patch import. Reviewed task checkpoints and a conservative merge queue survive app restarts; WSL2 containment is tracked in [docs/windows-port.md](docs/windows-port.md).
+The Windows slice provides an NSIS build target, PowerShell as the local terminal, saved WSL2 distribution/path routing for new agent sessions, standard Windows Chrome/Edge discovery, and an explicit Docker tool profile with default-deny networking, resource limits, unified first-party file-tool routing, and private task-copy patch import. Direct PowerShell agent calls require human approval; WSL2 routing is not represented as a sandbox. Reviewed task checkpoints and a conservative merge queue survive app restarts; the complete boundary is documented in [docs/windows-port.md](docs/windows-port.md).
 
 Each chat runs the pi SDK (`AgentSessionRuntime`) inside its own isolated Electron utility process. Sessions, auth, skills, prompts, and MCP config are fully shared with the pi CLI under `~/.pi/agent/`, so you can move between the terminal and the desktop app freely.
 
@@ -88,6 +88,7 @@ Pick how much power each chat gets — presets gate tools and UI surfaces:
 - **Execution worlds** — built-in bash/read/write/edit run either locally or inside a cloud VM (`set_execution_world`)
 - **Cloud VM sandbox (E2B)** — full desktop VM with live screen streaming, `vm_gui` mouse/keyboard control, `vm_file` transfer, `vm_screenshot`
 - **Local sandbox** — macOS seatbelt profiles: `off` / `workspace` / `strict`
+- **Windows runner profiles** — choose a launch environment, automatic WSL2, a selected WSL distribution/mount root, or PowerShell for new sessions; PiWin validates a real WSL2 kernel and maps the workspace with `wsl.exe --cd`. PowerShell agent `bash` calls require approval; WSL2 remains host-adjacent execution, not a sandbox
 - **Restricted Docker tools (Windows)** — explicit opt-in, default-deny network, read-only container root, dropped capabilities, process/CPU/memory limits; `bash/read/write/edit/grep/find/ls` share a credential-filtered read-only or task-private volume, with reviewed patch import before host changes. Optional networking is forced through a DNS allowlist proxy with per-request audit records. Secrets require a separately allowlisted, per-call approved one-shot container injection. Host-side extensions/MCP are not loaded by default; trusted opt-ins require a per-call approval and audit record
 - **Subagents** — `subagent_run` spawns up to 4 parallel workers (optionally readonly or VM-bound), monitored in a dock
 - **Browser** — headed Chrome/Edge automation via puppeteer-core with a persistent profile

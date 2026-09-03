@@ -35,9 +35,9 @@
 
 > **来源说明：**PiWin Studio 是基于 [Bivor](https://github.com/ryanlab/bivor) 开发的 Windows/WSL2 适配项目。Bivor 的版权归 ryanlab（Copyright (c) 2026 ryanlab）所有，使用 MIT 许可证；详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-**PiWin Studio** 是基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的桌面工作台。它保留 Bivor 的 Electron/Pi SDK 基础，并新增 Windows 打包、PowerShell 执行兼容、Docker 受限命令执行、基于结构的 Bash 护栏和可恢复的 Git 任务审核控制。
+**PiWin Studio** 是基于 [Pi Agent Harness](https://github.com/earendil-works/pi) 的桌面工作台。它保留 Bivor 的 Electron/Pi SDK 基础，并新增 Windows 打包、可配置的 PowerShell/WSL2 执行路由、Docker 受限命令执行、基于结构的 Bash 护栏和可恢复的 Git 任务审核控制。
 
-Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命令执行器、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制、内置文件工具统一路由和私有任务副本补丁导入的显式 Docker 工具 profile。任务审核 checkpoint 与保守合并队列在重启后可恢复；WSL2 隔离见 [docs/windows-port.md](docs/windows-port.md)。
+Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端、新建 agent 会话的 WSL2 发行版／路径路由、标准 Windows Chrome/Edge 路径发现，以及默认禁网、资源限制、内置文件工具统一路由和私有任务副本补丁导入的显式 Docker 工具 profile。直接在 PowerShell 中运行的 agent 调用必须人工确认；WSL2 路由不被表述为沙箱。任务审核 checkpoint 与保守合并队列在重启后可恢复；完整边界见 [docs/windows-port.md](docs/windows-port.md)。
 
 每个会话都在独立的 Electron utility process 中运行 pi SDK（`AgentSessionRuntime`）。会话、认证、技能、提示模板、MCP 配置与 pi CLI 完全互通（`~/.pi/agent/`），终端与桌面端可以随时切换。
 
@@ -88,6 +88,7 @@ Windows 版本已提供 NSIS 打包目标、PowerShell 本机终端与单次命�
 - **执行世界** — 内置 bash/read/write/edit 可在本地或云端 VM 中执行(`set_execution_world`)
 - **云端 VM 沙箱(E2B)** — 完整桌面 VM,实时画面流、`vm_gui` 鼠标键盘控制、`vm_file` 文件传输、`vm_screenshot`
 - **本地沙箱** — macOS seatbelt 配置:`off` / `workspace` / `strict`
+- **Windows 运行器 Profile** — 新建会话可沿用启动环境、自动选择 WSL2、指定 WSL 发行版／挂载根，或使用 PowerShell；PiWin 会验证真实 WSL2 内核，并用 `wsl.exe --cd` 映射工作区。PowerShell 下的 agent `bash` 必须审批；WSL2 仍是邻近宿主的执行方式，不是沙箱
 - **受限 Docker 工具（Windows）** — 显式启用、默认禁网、容器根目录只读、移除 capabilities、进程/CPU/内存限制；`bash/read/write/edit/grep/find/ls` 共享经凭据过滤的只读或任务私有 volume，导入补丁并人工确认后才改宿主 worktree。可选联网强制经过域名白名单代理，并逐请求写入审计记录；凭据只能由用户批准后临时注入单次容器。宿主侧扩展/MCP 默认不加载；仅允许已审查的显式启用项逐次审批并记录审计日志
 - **子 agent** — `subagent_run` 最多并行 4 个(可只读或绑定 VM),Dock 实时监控
 - **浏览器** — puppeteer-core 驱动有头 Chrome/Edge,持久化用户配置

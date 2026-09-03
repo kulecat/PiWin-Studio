@@ -737,6 +737,10 @@ function ExecutionTab(): React.JSX.Element {
   const t = useT();
   const [environment, setEnvironment] = useState<ExecutionEnvironmentPayload>();
   const [checking, setChecking] = useState(false);
+  const [runnerPreference, setRunnerPreference] = useState<"" | "auto" | "powershell" | "wsl">("");
+  const [wslDistribution, setWslDistribution] = useState("");
+  const [wslMountRoot, setWslMountRoot] = useState("/mnt");
+  const [savingPreferences, setSavingPreferences] = useState(false);
 
   const refresh = (): void => {
     setChecking(true);
@@ -748,7 +752,24 @@ function ExecutionTab(): React.JSX.Element {
 
   useEffect(() => {
     refresh();
+    void window.pi.config.get().then((config) => {
+      setRunnerPreference(config.executionRunner ?? "");
+      setWslDistribution(config.wslDistribution ?? "");
+      setWslMountRoot(config.wslMountRoot ?? "/mnt");
+    });
   }, []);
+
+  const savePreferences = (): void => {
+    setSavingPreferences(true);
+    void window.pi.config
+      .set({
+        executionRunner: runnerPreference || null,
+        wslDistribution: runnerPreference ? wslDistribution.trim() || null : null,
+        wslMountRoot: runnerPreference ? wslMountRoot.trim() || null : null,
+      })
+      .then(() => refresh())
+      .finally(() => setSavingPreferences(false));
+  };
 
   const runnerLabel: Record<WindowsExecutionRunner | "auto" | "posix", string> = {
     auto: t("settings.executionAuto"),
@@ -789,6 +810,64 @@ function ExecutionTab(): React.JSX.Element {
               {t("settings.executionRequested", { runner: runnerLabel[environment.configuredRunner] })}
             </div>
           </div>
+          {environment.platform === "win32" && (
+            <div className="rounded-xl border border-border bg-bg px-3 py-3 text-xs text-fg-secondary">
+              <div className="text-xs font-medium text-fg">{t("settings.executionPreferenceTitle")}</div>
+              <p className="pt-1 text-[11px] leading-relaxed text-fg-muted">{t("settings.executionPreferenceHint")}</p>
+              <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <select
+                  value={runnerPreference}
+                  onChange={(event) => setRunnerPreference(event.target.value as "" | "auto" | "powershell" | "wsl")}
+                  disabled={savingPreferences}
+                  className="rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-xs text-fg outline-none focus:border-accent disabled:opacity-50"
+                >
+                  <option value="">{t("settings.executionLaunchEnvironment")}</option>
+                  <option value="auto">{t("settings.executionAuto")}</option>
+                  <option value="wsl">WSL2</option>
+                  <option value="powershell">PowerShell</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={savePreferences}
+                  disabled={savingPreferences}
+                  className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-fg-secondary hover:border-border-strong hover:text-accent disabled:opacity-50"
+                >
+                  {savingPreferences ? <Loader2 size={12} className="animate-spin" /> : t("common.save")}
+                </button>
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <label className="text-[10.5px] text-fg-muted">
+                  {t("settings.wslDistribution")}
+                  <input
+                    value={wslDistribution}
+                    onChange={(event) => setWslDistribution(event.target.value)}
+                    placeholder={t("settings.wslDistributionPlaceholder")}
+                    disabled={savingPreferences || !runnerPreference}
+                    className="mt-1 w-full rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-xs text-fg outline-none placeholder:text-fg-muted focus:border-accent disabled:opacity-50"
+                  />
+                </label>
+                <label className="text-[10.5px] text-fg-muted">
+                  {t("settings.wslMountRoot")}
+                  <input
+                    value={wslMountRoot}
+                    onChange={(event) => setWslMountRoot(event.target.value)}
+                    placeholder="/mnt"
+                    disabled={savingPreferences || !runnerPreference}
+                    className="mt-1 w-full rounded-lg border border-border bg-bg-secondary px-2 py-1.5 font-mono text-xs text-fg outline-none placeholder:text-fg-muted focus:border-accent disabled:opacity-50"
+                  />
+                </label>
+              </div>
+              {environment.wsl && (
+                <div className="pt-2 text-[10.5px] leading-relaxed text-fg-muted">
+                  {t("settings.wslMapping", {
+                    distro: environment.wsl.distribution ?? t("settings.wslDefaultDistribution"),
+                    root: environment.wsl.mountRoot,
+                  })}
+                  <div className="pt-1 text-warning">{t("settings.powerShellApproval")}</div>
+                </div>
+              )}
+            </div>
+          )}
           {environment.dockerSandbox && (
             <div className="rounded-xl border border-border bg-bg px-3 py-3 text-xs text-fg-secondary">
               <div className="text-xs font-medium text-fg">{t("settings.dockerSandboxTitle")}</div>

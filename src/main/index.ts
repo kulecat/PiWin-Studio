@@ -6,7 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { ChatCreateOptions, CustomProviderDraft, HostCommand, ScheduledTask } from "@shared/protocol";
 import { IPC } from "@shared/protocol";
 import { TITLEBAR_HEIGHT } from "@shared/titlebar";
-import { inspectExecutionEnvironment, isDockerPrivateCopyModeActive } from "../host/windows-execution";
+import { applyExecutionConfig, inspectExecutionEnvironment, isDockerPrivateCopyModeActive } from "../host/windows-execution";
 import { createChat, disposeAllChats, disposeChat, sendChatCommand } from "./chats";
 import { getAppVersions, getMonitorSnapshot, killAgentProcess } from "./agent-monitor";
 import { checkForUpdates } from "./updates";
@@ -268,7 +268,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.workspaceSandboxGet, (e) => getWorkspaceSandbox(e.sender));
   ipcMain.handle(IPC.workspaceSandboxCreate, (e) => createWorkspaceSandbox(e.sender));
   ipcMain.handle(IPC.workspaceSandboxDestroy, () => destroyWorkspaceSandbox());
-  ipcMain.handle(IPC.executionInspect, () => inspectExecutionEnvironment());
+  ipcMain.handle(IPC.executionInspect, () => inspectExecutionEnvironment(applyExecutionConfig(process.env, getConfig())));
 
   ipcMain.handle(IPC.listModels, () => listModels());
   ipcMain.handle(IPC.listProviders, () => listProviders());

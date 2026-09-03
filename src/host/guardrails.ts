@@ -18,6 +18,8 @@ import type {
   PolicyEventPayload,
 } from "@shared/protocol";
 import { analyzeShellRisks } from "./shell-risk";
+import { currentWorld } from "./execution-world";
+import { hostPowerShellApprovalRule } from "./windows-execution";
 
 // TypeScript's `import type` must not erase the runtime default policy.
 import { DEFAULT_SHELL_RISK_POLICIES as defaultShellRiskPolicies } from "@shared/protocol";
@@ -206,11 +208,12 @@ export async function enforceBashPolicy(
     emit("blocked", "bash", `${requirement.label} 拦截: ${command.slice(0, 120)}`);
     return { ok: false, reason: `Harness 策略禁止此命令（${requirement.label}）。` };
   }
-  if (toolMode === "ask" || requirement.action === "ask") {
+  const hostRule = currentWorld() === "local" ? hostPowerShellApprovalRule() : undefined;
+  if (toolMode === "ask" || requirement.action === "ask" || hostRule) {
     const approved = await requestHumanApproval(
       "bash",
       { command },
-      requirement.action === "ask" ? requirement.label : "bash 工具策略",
+      hostRule ?? (requirement.action === "ask" ? requirement.label : "bash 工具策略"),
     );
     if (!approved) return { ok: false, reason: "用户拒绝了此命令。" };
   }
@@ -304,6 +307,7 @@ export function createGuardrailExtension(): InlineExtension {
         // downloads, privilege wrappers, project escapes, and network tools.
         // Legacy custom regex rules are applied to every extracted command too.
         let bashPolicy: BashRequirement = { action: "allow" };
+        let hostPowerShellRule: string | undefined;
         if (toolName === "bash" && typeof input.command === "string") {
           bashPolicy = await bashRequirement(input.command);
           if (bashPolicy.action === "deny") {
@@ -313,6 +317,7 @@ export function createGuardrailExtension(): InlineExtension {
               reason: `Harness 策略禁止此命令（${bashPolicy.label}）。请改用其他方式或询问用户。`,
             };
           }
+          if (currentWorld() === "local") hostPowerShellRule = hostPowerShellApprovalRule();
         }
 
         // 5) per-tool policy
@@ -329,15 +334,17 @@ export function createGuardrailExtension(): InlineExtension {
         // this boundary to `allow`. Do not show a duplicate generic `ask`
         // card for the same call.
         const mustAskForHostBoundary = mandatoryApprovalTools.has(toolName);
-        if (mustAskForHostBoundary || mode === "ask" || bashPolicy.action === "ask") {
+        if (mustAskForHostBoundary || mode === "ask" || bashPolicy.action === "ask" || hostPowerShellRule) {
           const approved = await requestHumanApproval(
             toolName,
             input,
             mustAskForHostBoundary
               ? mandatoryApprovalRule
-              : bashPolicy.action === "ask"
-                ? bashPolicy.label
-                : "工具策略",
+              : hostPowerShellRule
+                ? hostPowerShellRule
+                : bashPolicy.action === "ask"
+                  ? bashPolicy.label
+                  : "工具策略",
           );
           if (approved) return undefined;
           return {

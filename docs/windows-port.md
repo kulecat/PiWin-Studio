@@ -15,10 +15,20 @@
 `src/host/windows-execution.ts` is the single source of truth for local tool
 execution on Windows:
 
-- `auto` (the default) selects WSL2 when `wsl.exe` is available, preserving
-  the POSIX shell semantics expected by Pi tools; otherwise it uses PowerShell.
+- `auto` selects WSL2 only after PiWin successfully runs a short command in a
+  WSL2 kernel, preserving the POSIX shell semantics expected by Pi tools;
+  otherwise it uses PowerShell.
 - Set `PIWIN_EXECUTION_RUNNER=powershell`, `wsl`, or `docker` to choose a
   runner explicitly.
+- **Settings → Local execution environment** can store an `auto`, WSL2, or
+  PowerShell preference for *new* agent sessions. Leaving its first choice,
+  **Use launch environment**, selected preserves an explicit startup profile
+  such as `PIWIN_EXECUTION_RUNNER=docker`.
+- A WSL profile may select `PIWIN_WSL_DISTRIBUTION` (or a saved distribution)
+  and `PIWIN_WSL_MOUNT_ROOT` (or a saved mount root, default `/mnt`). PiWin
+  validates the requested distribution, verifies it has a WSL2 kernel, and
+  opens the task directory with `wsl.exe --cd`; for example,
+  `E:\project` maps to `/mnt/e/project` with the default mount root.
 - Docker is never selected automatically. In its default read-only profile it
   mounts the active worktree at `/workspace`; writable mode instead requires a
   fresh PiWin-managed task worktree and uses a private Docker volume. Configure
@@ -27,6 +37,13 @@ execution on Windows:
   PowerShell version, installed WSL distribution, and Docker daemon before it
   displays the effective runner. An explicitly selected unavailable runner is
   shown as unavailable rather than silently falling back.
+
+PowerShell is direct execution in the signed-in Windows user's environment,
+not a sandbox. When it is the effective local runner, every agent `bash` call
+(including `pi.bash(...)` within `code_run`) presents a human approval card
+before execution. The approval decision and the resulting command execution
+are both recorded in the existing per-session audit chain. Interactive user
+terminals are intentionally outside this agent-tool guard.
 
 ## Docker restricted command profile
 
@@ -243,9 +260,10 @@ variable names and decisions only.
 Raw command text is intentionally not stored because shell commands often
 contain tokens or credentials.
 
-The same per-session file also records `allow / ask / deny` policy decisions
-and budget stops. Their UI detail is represented by byte length and a SHA-256
-fingerprint, not copied verbatim into the audit file.
+The same per-session file also records `allow / ask / deny` policy decisions,
+including direct-PowerShell approvals, and budget stops. Their UI detail is
+represented by byte length and a SHA-256 fingerprint, not copied verbatim into
+the audit file.
 
 The log is append-only from PiWin's perspective and its hash chain can reveal
 accidental truncation or reordering. It is not a tamper-proof security ledger:
@@ -287,8 +305,10 @@ filter, and human approvals remain the actual enforcement controls.
 ## Remaining security boundary work
 
 The Docker restricted tool profile is the first Windows containment layer.
-Native PowerShell and WSL2 are convenience runners and must always be visibly
-marked as host execution in the UI and audit log. Docker task-private copies
-now provide a unified first-party file and command boundary plus a
+Native PowerShell and WSL2 are convenience runners, not containment profiles:
+WSL2 receives a mapped host project directory and can access whatever the
+chosen distribution/user can access. They must always be visibly marked as
+host execution in the UI and audit log. Docker task-private copies now provide
+a unified first-party file and command boundary plus a
 domain-allowlisted HTTP(S) egress path and filtered credential-safe workspace;
 third-party tool routing and durable recovery remain planned.
