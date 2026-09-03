@@ -45,6 +45,40 @@ before execution. The approval decision and the resulting command execution
 are both recorded in the existing per-session audit chain. Interactive user
 terminals are intentionally outside this agent-tool guard.
 
+## Experimental WSL2 containment spike
+
+PiWin now performs a capability diagnostic for
+[Bubblewrap](https://github.com/containers/bubblewrap) inside the selected
+WSL2 distribution. It is shown in **Settings → Local execution environment**
+as **WSL2 Bubblewrap containment spike**, but it is intentionally not an Agent
+runner or a sandbox setting.
+
+The tested profile uses Bubblewrap's user, PID, IPC, UTS, mount, and network
+namespaces, and prevents a process from creating further user namespaces. It
+clears the inherited environment, provides only a read-only
+Linux runtime, an empty `/etc`, temporary `/home` and `/tmp`, a new `/dev` and
+`/proc`, and hides the configured Windows drive mount root. It has no default
+network route. Its only intended project mount is `/workspace`, bound from a
+**native WSL private task copy**; the builder rejects a task source below the
+Windows mount root, so a writable profile cannot bind the Windows worktree.
+
+The probe itself creates no task copy and does not run Agent commands. A green
+result means only that this host can form the tested namespace boundary. It
+does not mean PiWin has a complete WSL sandbox. Before it can become selectable
+we still need to:
+
+1. seed and retire a credential-filtered native WSL task copy from a guarded
+   Git worktree;
+2. route `bash`, `read`, `write`, `edit`, `grep`, `find`, and `ls` through that
+   same copy, with path and symlink containment;
+3. extract, validate, and human-confirm a patch import back into the guarded
+   task worktree; and
+4. audit copy lifecycle/recovery and separately design any opt-in network
+   allowlist path.
+
+This scoped approach avoids changing the user's global `/etc/wsl.conf` drive
+mount behavior, which is distribution-wide rather than task-scoped.
+
 ## Docker restricted command profile
 
 When `PIWIN_EXECUTION_RUNNER=docker` is selected, PiWin runs each agent shell

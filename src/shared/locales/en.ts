@@ -142,6 +142,8 @@ export const en: Messages = {
     wslDefaultDistribution: "default distribution",
     wslMapping: "Current WSL route: {distro}; Windows paths map as {root}/drive/….",
     powerShellApproval: "PowerShell runs directly in the Windows user environment. Every agent bash call requires human approval and is written to the execution audit.",
+    wslContainmentTitle: "WSL2 Bubblewrap containment spike",
+    wslContainmentScope: "Diagnostic only: sessions are not routed through this profile until every built-in file tool shares a private WSL task copy and a reviewed patch import.",
     dockerSandboxTitle: "Restricted Docker profile",
     dockerSandboxSummary: "Workspace: {workspace} · Network: {network} · {memory} memory · {cpus} CPU · {pids} PIDs",
     dockerWorkspaceReadonly: "Read-only (write / edit disabled)",

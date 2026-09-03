@@ -326,6 +326,22 @@ and recoverable worktree-based agent tasks.
   receives a mapped host project directory; Docker remains the first supported
   containment boundary for PiWin's first-party tools.
 
+### 2026-09-03 — WSL2 Bubblewrap containment spike
+
+- Added `src/host/wsl-containment.ts`, an unexposed Bubblewrap profile builder
+  for a future WSL-native private task copy. The builder creates user, PID,
+  IPC, UTS, mount, and network namespaces; blocks nested user namespaces;
+  clears inherited environment;
+  hides the Windows-drive mount root; and permits only one native-Linux
+  workspace bind at `/workspace`. It rejects a task source under the Windows
+  mount root, so a writable profile cannot directly bind the host worktree.
+- Added a cached Settings diagnostic that exercises this boundary without an
+  Agent session. It reports Bubblewrap namespace readiness but explicitly says
+  that it is not a selectable sandbox profile.
+- Kept the boundary honest: no Agent tool is routed through Bubblewrap yet.
+  A private-copy lifecycle, full first-party file-tool routing, reviewed patch
+  import, recovery, and an optional WSL network policy are prerequisites.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -372,6 +388,13 @@ and recoverable worktree-based agent tasks.
   instance: saved config application, `E:\piwin-studio\bivor-main` to
   `/mnt/e/piwin-studio/bivor-main` mapping, WSL2 kernel readiness, and the
   PowerShell host-approval rule all passed (`WSL_ROUTING_SMOKE_OK`).
+- Ran a compiled Bubblewrap containment smoke test inside Ubuntu WSL2. It
+  verified the generated profile rejects a DrvFs workspace, hides `/mnt/c`,
+  uses an empty temporary home/workspace, and has no default network route
+  (`WSL_CONTAINMENT_SMOKE_OK`).
+- Verified that the same profile can bind an existing native WSL directory at
+  `/workspace` after the host `/home` has been hidden, while `/mnt/c` remains
+  inaccessible (`WSL_PRIVATE_SOURCE_BIND_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -405,15 +428,17 @@ and recoverable worktree-based agent tasks.
 - PowerShell requires agent-call approval but is still a convenience runner,
   not a security boundary. WSL2 routing also is not containment: it maps the
   host project into Linux. Docker covers Pi's built-in command and file tools;
-  WSL2 containment, WSL network policy, and third-party extension/MCP routing
-  remain pending.
+  the Bubblewrap probe is not yet an Agent sandbox. WSL private-copy lifecycle,
+  first-party file-tool routing, WSL network policy, and third-party
+  extension/MCP routing remain pending.
 
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer, including Docker
    private-patch lifecycle events and task-ledger links.
-2. Define and test a WSL2 containment profile; do not expose it as a sandbox
-   until filesystem and network boundaries are independently verified.
+2. Build the WSL-native private task-copy lifecycle, then route every
+   first-party command/file tool through it and require reviewed patch import
+   before exposing Bubblewrap as an Agent sandbox.
 3. Extend the non-Docker policy layer with destination-specific network rules
    and controlled routing for third-party extensions/MCP tools.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as

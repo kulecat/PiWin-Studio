@@ -14,12 +14,14 @@ import { spawnSync } from "node:child_process";
 import { delimiter, join } from "node:path";
 import { dockerEgressInvocationArgs } from "./docker-egress";
 import { resolveDockerCredentialValues, type DockerCredentialValue } from "./docker-credential-policy";
+import { buildWslContainmentProbeArgs, readWslContainmentProbe } from "./wsl-containment";
 import type {
   AppConfigPayload,
   DockerSandboxProfile,
   ExecutionEnvironmentPayload,
   ExecutionRunnerStatus,
   WslExecutionProfile,
+  WslContainmentStatus,
   WindowsExecutionRunner,
 } from "@shared/protocol";
 
@@ -64,6 +66,7 @@ interface WslProbe {
 }
 
 const cachedWslProbes = new Map<string, WslProbe>();
+const cachedWslContainmentProbes = new Map<string, WslContainmentStatus>();
 
 function executableOnPath(name: string): boolean {
   if (process.platform !== "win32") return false;
@@ -308,6 +311,31 @@ function wslReady(environment: NodeJS.ProcessEnv = process.env): boolean {
   return probeWsl(environment).available;
 }
 
+/**
+ * A capability diagnostic only. The Bubblewrap profile is deliberately not a
+ * selectable Agent runner until all built-in file tools use the same private
+ * WSL copy and a reviewed patch-import hand-off exists.
+ */
+function probeWslContainment(environment: NodeJS.ProcessEnv = process.env): WslContainmentStatus {
+  const settings = wslSettings(environment);
+  const cacheKey = `${settings.distribution ?? "<default>"}\n${settings.mountRoot}\n${settings.error ?? ""}`;
+  const cached = cachedWslContainmentProbes.get(cacheKey);
+  if (cached) return cached;
+  if (!probeWsl(environment).available) {
+    const probe = { available: false, detail: "WSL2 must be ready before Bubblewrap containment can be checked" };
+    cachedWslContainmentProbes.set(cacheKey, probe);
+    return probe;
+  }
+  const result = spawnSync(
+    "wsl.exe",
+    [...wslArgs(settings), "--exec", "bwrap", ...buildWslContainmentProbeArgs(settings.mountRoot)],
+    { encoding: "utf8", timeout: 2_500, windowsHide: true },
+  );
+  const probe = readWslContainmentProbe(result.stdout, result.status);
+  cachedWslContainmentProbes.set(cacheKey, probe);
+  return probe;
+}
+
 function compactProcessError(value: string | undefined): string | undefined {
   const compact = value?.replace(/\s+/g, " ").trim();
   return compact ? compact.slice(0, 160) : undefined;
@@ -541,6 +569,7 @@ export function inspectExecutionEnvironment(environment: NodeJS.ProcessEnv = pro
           mountRoot: settings.mountRoot,
         } satisfies WslExecutionProfile
       : undefined,
+    wslContainment: process.platform === "win32" ? probeWslContainment(environment) : undefined,
     dockerSandbox: process.platform === "win32" ? getDockerSandboxProfile() : undefined,
   };
 }

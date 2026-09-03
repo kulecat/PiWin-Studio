@@ -140,6 +140,8 @@ export const zh = {
     wslDefaultDistribution: "默认发行版",
     wslMapping: "当前 WSL 路由：{distro}；Windows 路径按 {root}/盘符/… 映射。",
     powerShellApproval: "PowerShell 直接运行在 Windows 用户环境。每次 agent bash 调用都需要人工确认，并写入执行审计。",
+    wslContainmentTitle: "WSL2 Bubblewrap 隔离验证",
+    wslContainmentScope: "仅为诊断：在全部内置文件工具共享 WSL 私有任务副本、并完成审核式补丁导入前，会话不会路由到此 Profile。",
     dockerSandboxTitle: "Docker 受限执行 Profile",
     dockerSandboxSummary: "工作区：{workspace} · 网络：{network} · 内存 {memory} · CPU {cpus} · 进程 {pids}",
     dockerWorkspaceReadonly: "只读（write / edit 已禁用）",

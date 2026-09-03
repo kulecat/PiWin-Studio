@@ -866,6 +866,16 @@ function ExecutionTab(): React.JSX.Element {
                   <div className="pt-1 text-warning">{t("settings.powerShellApproval")}</div>
                 </div>
               )}
+              {environment.wslContainment && (
+                <div className="mt-2 rounded-lg border border-border bg-bg-secondary px-2.5 py-2 text-[10.5px] leading-relaxed text-fg-muted">
+                  <div className="font-medium text-fg">{t("settings.wslContainmentTitle")}</div>
+                  <div className={environment.wslContainment.available ? "pt-0.5 text-success" : "pt-0.5 text-warning"}>
+                    {environment.wslContainment.available ? t("settings.executionReady") : t("settings.executionUnavailable")}
+                  </div>
+                  <div className="pt-0.5">{environment.wslContainment.detail}</div>
+                  <div className="pt-1 text-warning">{t("settings.wslContainmentScope")}</div>
+                </div>
+              )}
             </div>
           )}
           {environment.dockerSandbox && (

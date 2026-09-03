@@ -108,6 +108,12 @@ export interface WslExecutionProfile {
   mountRoot: string;
 }
 
+/** Diagnostic result for the unexposed Bubblewrap WSL containment spike. */
+export interface WslContainmentStatus {
+  available: boolean;
+  detail: string;
+}
+
 /** Current local-execution selection plus live prerequisite checks. */
 export interface ExecutionEnvironmentPayload {
   platform: NodeJS.Platform;
@@ -116,6 +122,8 @@ export interface ExecutionEnvironmentPayload {
   runners: ExecutionRunnerStatus[];
   /** Present on Windows. Describes WSL launch/mapping behavior, not containment. */
   wsl?: WslExecutionProfile;
+  /** Present on Windows. Diagnostic only; it is not an Agent execution profile. */
+  wslContainment?: WslContainmentStatus;
   /** Present on Windows. Applies only when the Docker runner is selected. */
   dockerSandbox?: DockerSandboxProfile;
 }
