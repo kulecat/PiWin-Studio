@@ -742,6 +742,7 @@ async function init(msg: HostInit): Promise<void> {
             }),
             buildSubagentTool({
               getCwd: () => cwd,
+              isPrivateWorkspaceActive: () => dockerHostToolsBoundaryActive() || wslHostToolsBoundaryActive(),
               getParent: () => session,
               onUpdate: (update) => send({ type: "subagent", update }),
             }),

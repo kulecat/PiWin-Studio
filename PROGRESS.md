@@ -548,6 +548,29 @@ and recoverable worktree-based agent tasks.
   and Node.js inside Ubuntu WSL for a dedicated disposable-repository spike,
   followed by a private-copy provider rather than its default direct host mount.
 
+### 2026-09-03 — P5 guarded multi-task coordination baseline
+
+- Advanced the local Git-common-directory task ledger to schema version 5.
+  Mission Control now persists a short task **owner / agent** label and optional
+  role for active guarded worktrees, and records each change as a bounded
+  lifecycle audit event. It is a durable allocation note, not a fabricated
+  live-agent status or an automatic scheduler.
+- Added **Export task audit**. It atomically creates a JSON hand-off under the
+  Git common directory's `piwin-audit-exports/` folder with task state,
+  checkpoints, merge queue, path claims, assignments, and events plus a
+  SHA-256 payload digest. The export intentionally excludes source content,
+  absolute repository/worktree paths, Docker volume identifiers, and native
+  WSL private-copy paths. It remains a local, unsigned review artifact.
+- Closed a composition gap: a child SDK `subagent_run` session cannot inherit
+  PiWin's Docker-private-volume or WSL Bubblewrap tool routing, so it now
+  refuses to start while either private-workspace boundary is active. Parallel
+  isolated work uses separately guarded task worktrees instead, preserving
+  independent checkpoints, conflict warnings, review, and explicit merge.
+- Passed `pnpm typecheck` and the new disposable repository regression test
+  `pnpm verify:task-governance` (`TASK_GOVERNANCE_P5_SMOKE_OK`). The isolated
+  tool-boundary smoke remains in place for the extension/MCP resource boundary;
+  the child-session refusal is covered by the host type/build checks.
+
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer, including Docker
@@ -558,10 +581,7 @@ and recoverable worktree-based agent tasks.
    and controlled routing for third-party extensions/MCP tools.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
    experimental after all built-in tool routes are verified.
-5. Add explicit task-to-agent assignment and a multi-task audit export; the
-   current local ledger and path claims are deliberately conservative and do
-   not auto-resolve conflicts or resume an agent process.
-6. Complete a manual desktop UI smoke test on a clean profile and establish a
+5. Complete a manual desktop UI smoke test on a clean profile and establish a
    signed Windows release workflow.
 
 ## Working agreement

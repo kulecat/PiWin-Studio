@@ -268,13 +268,30 @@ It removes a queued entry and returns the task to review-ready state; it does
 not delete a Docker private volume, which must still be imported or discarded
 explicitly.
 
-### Mission Control task ledger and path-claim warnings
+### Mission Control task ledger, ownership, and path-claim warnings
 
-Schema version 3 adds a bounded, local lifecycle event list to the same Git
+Schema version 5 adds a bounded, local lifecycle event list to the same Git
 common-directory metadata. Mission Control shows recent creation, review,
-queue, pause, merge, checkpoint restore, path-claim, and discard events along
-with each task's queue state and checkpoint count. This is a local operational
-record, not a cloud service or a tamper-proof compliance log.
+queue, pause, merge, checkpoint restore, path-claim, assignment, and discard
+events along with each task's queue state and checkpoint count. This is a local
+operational record, not a cloud service or a tamper-proof compliance log.
+
+Each active task may additionally have a short **owner / agent** label and an
+optional role. It is a durable work-allocation note for people coordinating
+parallel tasks, not proof that a named model, person, or PiWin chat is still
+running. An isolated Docker-private or WSL Bubblewrap chat cannot use the
+in-memory `subagent_run` tool because a child SDK session would not inherit the
+same routed private filesystem. In that case, parallel work must use separate
+guarded task worktrees, which retain their own task label, checkpoint history,
+conflict warnings, review, and merge hand-off.
+
+The **Export task audit** button creates an atomic JSON snapshot beneath the
+repository's Git common directory in `piwin-audit-exports/` and opens it in the
+file manager. It includes task state, assignments, checkpoints, queue state,
+path claims, and lifecycle events with a SHA-256 payload digest. It deliberately
+excludes source contents, Docker volume names, native WSL private-copy paths,
+and the repository's absolute path. Treat the resulting local file as a review
+hand-off: it is not signed, remote, or tamper-proof.
 
 An operator may declare project-relative paths such as `src/ui` or
 `docs/readme.md` for an active task. PiWin rejects absolute paths, drive

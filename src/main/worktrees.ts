@@ -21,8 +21,10 @@ import type {
   WslTaskPatchImportResult,
   WslTaskPatchPreview,
   WslTaskWorkspaceState,
+  WorktreeAuditExportResult,
   WorktreeTaskAuditEvent,
   WorktreeTaskAuditEventKind,
+  WorktreeTaskAssignment,
   WorktreeCheckpointKind,
   WorktreeCheckpointRestoreResult,
   WorktreeDiscardResult,
@@ -44,7 +46,7 @@ import {
 
 const exec = promisify(execFile);
 const TASKS_FILE = "piwin-tasks.json";
-const TASKS_SCHEMA_VERSION = 4;
+const TASKS_SCHEMA_VERSION = 5;
 const TASK_AUDIT_EVENT_LIMIT = 600;
 const DOCKER_PRIVATE_VOLUME_PREFIX = "piwin-task-";
 const DOCKER_PRIVATE_BASE_REF = "refs/piwin/private-base";
@@ -97,6 +99,8 @@ interface PersistedTask {
   };
   /** User-declared project-relative paths used for conservative conflict warnings. */
   pathClaims?: string[];
+  /** Human-readable responsibility; it does not report a live agent process. */
+  assignment?: WorktreeTaskAssignment;
   dockerWorkspace?: DockerTaskWorkspaceRecord;
   wslWorkspace?: WslTaskWorkspaceRecord;
 }
@@ -242,7 +246,7 @@ async function readTaskStore(root: string): Promise<TaskStore> {
     // copies. Upgrade in
     // memory and write the new shape only after the next normal mutation.
     if (
-      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== TASKS_SCHEMA_VERSION) ||
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== 4 && parsed.version !== TASKS_SCHEMA_VERSION) ||
       !Array.isArray(parsed.tasks)
     ) {
       throw new Error("unsupported task metadata");
@@ -1419,6 +1423,7 @@ async function buildWorktreeTaskDashboard(root: string): Promise<WorktreeTaskDas
       createdAt: task.createdAt,
       targetBranch: task.targetBranch,
       checkpointCount: task.checkpoints?.length ?? 0,
+      assignment: task.assignment,
       claimedPaths: task.pathClaims ?? [],
       changedPaths: changedPaths[index],
       conflicts: [],
@@ -1497,6 +1502,138 @@ export async function setWorktreePathClaims(
     ].slice(-TASK_AUDIT_EVENT_LIMIT);
     await writeTaskStore(root, store);
     return buildWorktreeTaskDashboard(root);
+  });
+}
+
+function normalizeAssignmentText(value: string | undefined, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) return undefined;
+  if (/[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error(`${label} 不能包含控制字符。`);
+  }
+  return normalized.slice(0, 80);
+}
+
+/**
+ * Record the person or logical agent responsible for a mutable task. This is
+ * a durable coordination label, deliberately separate from live chat state.
+ */
+export async function setWorktreeTaskAssignment(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  input: { agent?: string; role?: string },
+): Promise<WorktreeTaskDashboard> {
+  const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, async () => {
+    const task = await requireTask(root, worktreePath, branch, taskId);
+    if (!isMutableTask(task)) throw new Error("只能为进行中的任务设置负责人。");
+    const agent = normalizeAssignmentText(input.agent, "负责人");
+    const role = normalizeAssignmentText(input.role, "职责");
+    if (role && !agent) throw new Error("设置职责时必须同时填写负责人。");
+    const assignment = agent
+      ? { agent, ...(role ? { role } : {}), assignedAt: new Date().toISOString() }
+      : undefined;
+    const store = await readTaskStore(root);
+    const index = store.tasks.findIndex((candidate) => candidate.id === task.id);
+    if (index < 0) throw new Error("PiWin 任务元数据不存在");
+    store.tasks[index] = { ...store.tasks[index], assignment };
+    store.auditEvents = [
+      ...store.auditEvents,
+      {
+        id: randomUUID(),
+        taskId: task.id,
+        kind: "task_assignment_updated" as const,
+        createdAt: new Date().toISOString(),
+        detail: assignment
+          ? `Assigned ${assignment.agent}${assignment.role ? ` as ${assignment.role}` : ""}`
+          : "Cleared task assignment",
+      },
+    ].slice(-TASK_AUDIT_EVENT_LIMIT);
+    await writeTaskStore(root, store);
+    return buildWorktreeTaskDashboard(root);
+  });
+}
+
+function auditTaskExportView(task: PersistedTask): Record<string, unknown> {
+  // Keep source contents and local infrastructure identifiers out of a
+  // shareable export. Docker volume names and native WSL copy paths are not
+  // useful review evidence and reveal local topology.
+  return {
+    taskId: task.id,
+    branch: task.branch,
+    baseRef: task.baseRef,
+    baseCommit: task.baseCommit,
+    targetBranch: task.targetBranch,
+    targetCommit: task.targetCommit,
+    state: task.state,
+    createdAt: task.createdAt,
+    reviewedAt: task.reviewedAt,
+    reviewCommit: task.reviewCommit,
+    mergedAt: task.mergedAt,
+    mergedCommit: task.mergedCommit,
+    discardedAt: task.discardedAt,
+    assignment: task.assignment,
+    pathClaims: task.pathClaims ?? [],
+    checkpoints: task.checkpoints ?? [],
+    queue: task.queuedAt
+      ? { queuedAt: task.queuedAt, blocked: task.queueBlocked }
+      : undefined,
+    dockerWorkspace: task.dockerWorkspace
+      ? {
+          state: task.dockerWorkspace.state,
+          sourceCommit: task.dockerWorkspace.sourceCommit,
+          createdAt: task.dockerWorkspace.createdAt,
+          importedAt: task.dockerWorkspace.importedAt,
+          discardedAt: task.dockerWorkspace.discardedAt,
+        }
+      : undefined,
+    wslWorkspace: task.wslWorkspace
+      ? {
+          state: task.wslWorkspace.state,
+          distribution: task.wslWorkspace.distribution,
+          sourceCommit: task.wslWorkspace.sourceCommit,
+          createdAt: task.wslWorkspace.createdAt,
+          importedAt: task.wslWorkspace.importedAt,
+          discardedAt: task.wslWorkspace.discardedAt,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * Export a reviewable local snapshot of the task ledger. The result is
+ * atomically written under .git and integrity-tagged. It is neither a remote
+ * synchronization service nor a tamper-proof compliance log.
+ */
+export async function exportWorktreeAudit(projectPath: string): Promise<WorktreeAuditExportResult> {
+  const root = await primaryRoot(projectPath);
+  return withMergeQueueLock(root, async () => {
+    const store = await readTaskStore(root);
+    const generatedAt = new Date().toISOString();
+    const payload = {
+      schemaVersion: 1,
+      generatedAt,
+      projectFingerprint: createHash("sha256").update(normalizePath(root)).digest("hex"),
+      tasks: store.tasks.map(auditTaskExportView),
+      mergeQueue: store.mergeQueue,
+      auditEvents: [...store.auditEvents].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    };
+    const sha256 = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    const artifact = {
+      ...payload,
+      integrity: { algorithm: "sha256", payloadSha256: sha256 },
+    };
+    const directory = join(await gitCommonDir(root), "piwin-audit-exports");
+    await mkdir(directory, { recursive: true });
+    const safeTimestamp = generatedAt.replace(/[:.]/g, "-");
+    const path = join(directory, `piwin-task-audit-${safeTimestamp}-${sha256.slice(0, 12)}.json`);
+    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+    await rename(temporary, path);
+    return { path, generatedAt, taskCount: store.tasks.length, eventCount: store.auditEvents.length, sha256 };
   });
 }
 

@@ -770,6 +770,7 @@ export type WorktreeTaskAuditEventKind =
   | "merge_completed"
   | "checkpoint_restored"
   | "path_claims_updated"
+  | "task_assignment_updated"
   | "wsl_copy_created"
   | "wsl_patch_imported"
   | "wsl_copy_discarded"
@@ -792,6 +793,13 @@ export interface WorktreeTaskPathConflict {
   paths: string[];
 }
 
+/** Human-assigned responsibility label for a guarded task, not a live-agent claim. */
+export interface WorktreeTaskAssignment {
+  agent: string;
+  role?: string;
+  assignedAt: string;
+}
+
 /** Non-mutating Mission Control summary of a persisted guarded task. */
 export interface WorktreeTaskDashboardItem {
   taskId: string;
@@ -801,6 +809,7 @@ export interface WorktreeTaskDashboardItem {
   createdAt: string;
   targetBranch: string;
   checkpointCount: number;
+  assignment?: WorktreeTaskAssignment;
   claimedPaths: string[];
   changedPaths: string[];
   conflicts: WorktreeTaskPathConflict[];
@@ -817,6 +826,17 @@ export interface WorktreeTaskDashboard {
   tasks: WorktreeTaskDashboardItem[];
   /** Most recent lifecycle records first; retained locally with a bounded history. */
   events: WorktreeTaskAuditEvent[];
+}
+
+/** Local JSON hand-off for reviewing a task ledger outside the app. */
+export interface WorktreeAuditExportResult {
+  /** Written under the repository's Git common directory, never the source tree. */
+  path: string;
+  generatedAt: string;
+  taskCount: number;
+  eventCount: number;
+  /** SHA-256 over the exported payload before its integrity envelope is added. */
+  sha256: string;
 }
 
 /** Stable identity for a task worktree. The metadata lives in the repository's Git data, not the source tree. */
@@ -1190,6 +1210,8 @@ export const IPC = {
   listWorktrees: "worktree:list",
   worktreeDashboard: "worktree:dashboard",
   worktreePathClaims: "worktree:pathClaims",
+  worktreeAssignment: "worktree:assignment",
+  worktreeExportAudit: "worktree:exportAudit",
   listBranches: "worktree:branches",
   removeWorktree: "worktree:remove",
   worktreeStatus: "worktree:status",

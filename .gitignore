@@ -16,3 +16,4 @@ dist-*/
 # Temporary bundle written by `pnpm verify:wsl-recovery`.
 .piwin-wsl-recovery-smoke.mjs
 .piwin-isolated-tool-boundary-smoke.mjs
+.piwin-task-governance-smoke.mjs

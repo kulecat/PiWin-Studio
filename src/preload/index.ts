@@ -33,6 +33,7 @@ import type {
   WorktreeQueueResult,
   WorktreeCheckpointRestoreResult,
   WorktreeDiscardResult,
+  WorktreeAuditExportResult,
   WorktreeTaskDashboard,
   WorktreeStatusInfo,
   WorktreeTaskRef,
@@ -279,6 +280,16 @@ const api = {
       claims: string[],
     ): Promise<WorktreeTaskDashboard> =>
       ipcRenderer.invoke(IPC.worktreePathClaims, path, wt, branch, taskId, claims),
+    setAssignment: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      assignment: { agent?: string; role?: string },
+    ): Promise<WorktreeTaskDashboard> =>
+      ipcRenderer.invoke(IPC.worktreeAssignment, path, wt, branch, taskId, assignment),
+    exportAudit: (path: string): Promise<WorktreeAuditExportResult> =>
+      ipcRenderer.invoke(IPC.worktreeExportAudit, path),
     branches: (path: string): Promise<{ current: string; branches: string[] }> =>
       ipcRenderer.invoke(IPC.listBranches, path),
     status: (path: string, wt: string, branch: string, taskId?: string): Promise<WorktreeStatusInfo> =>

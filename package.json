@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "verify:wsl-recovery": "pnpm exec esbuild scripts/verify-wsl-recovery.ts --bundle --platform=node --format=esm --outfile=.piwin-wsl-recovery-smoke.mjs && node .piwin-wsl-recovery-smoke.mjs",
     "verify:isolated-tools": "pnpm exec esbuild scripts/verify-isolated-tool-boundary.ts --bundle --platform=node --format=esm --outfile=.piwin-isolated-tool-boundary-smoke.mjs && node .piwin-isolated-tool-boundary-smoke.mjs",
+    "verify:task-governance": "pnpm exec esbuild scripts/verify-task-governance.ts --bundle --platform=node --format=esm --outfile=.piwin-task-governance-smoke.mjs && node .piwin-task-governance-smoke.mjs",
     "dist:mac": "electron-vite build && electron-builder --mac",
     "dist:win": "electron-vite build && electron-builder --win",
     "dist:win:dir": "electron-vite build && electron-builder --win --dir"

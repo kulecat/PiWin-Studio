@@ -106,6 +106,7 @@ import {
   discardDockerTaskPatch,
   discardWslTaskPatch,
   discardTask,
+  exportWorktreeAudit,
   findManagedTaskForWorktreePath,
   importDockerTaskPatch,
   importWslTaskPatch,
@@ -121,6 +122,7 @@ import {
   previewWslTaskPatch,
   removeWorktree,
   restoreWorktreeCheckpoint,
+  setWorktreeTaskAssignment,
   setWorktreePathClaims,
   unqueueWorktreeMerge,
   worktreeTaskDashboard,
@@ -431,6 +433,12 @@ function registerIpc(): void {
     (_e, path: string, wt: string, branch: string, taskId: string, claims: string[]) =>
       setWorktreePathClaims(path, wt, branch, taskId, claims),
   );
+  ipcMain.handle(
+    IPC.worktreeAssignment,
+    (_e, path: string, wt: string, branch: string, taskId: string, assignment: { agent?: string; role?: string }) =>
+      setWorktreeTaskAssignment(path, wt, branch, taskId, assignment),
+  );
+  ipcMain.handle(IPC.worktreeExportAudit, (_e, path: string) => exportWorktreeAudit(path));
   ipcMain.handle(IPC.listBranches, (_e, path: string) => listBranches(path));
   ipcMain.handle(IPC.removeWorktree, (_e, path: string, wt: string, branch?: string) =>
     removeWorktree(path, wt, branch),

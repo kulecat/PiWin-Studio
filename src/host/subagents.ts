@@ -22,6 +22,8 @@ const WALL_CLOCK_LIMIT_MS = 15 * 60 * 1000;
 
 interface SubagentDeps {
   getCwd: () => string;
+  /** Child SDK sessions cannot inherit PiWin's routed private workspace. */
+  isPrivateWorkspaceActive?: () => boolean;
   /** Parent session, used to inherit the current model. */
   getParent: () => AgentSession | undefined;
   onUpdate: (update: SubagentUpdatePayload) => void;
@@ -103,6 +105,16 @@ export function buildSubagentTool(deps: SubagentDeps): ToolDefinition {
         max_turns?: number;
         vm?: boolean;
       };
+      if (deps.isPrivateWorkspaceActive?.()) {
+        return {
+          content: [{
+            type: "text",
+            text: "当前 Docker 私有工作区或 WSL Bubblewrap 会话不能派生内置子 agent：子会话无法继承同一文件系统边界。请为并行工作创建独立的 PiWin 任务 worktree；它会保留负责人、checkpoint、冲突预警和审核合并流程。",
+          }],
+          details: {},
+          isError: true,
+        };
+      }
       const maxConcurrent = guardrails.subagentMaxConcurrent || MAX_CONCURRENT;
       if (running.size >= maxConcurrent) {
         return {

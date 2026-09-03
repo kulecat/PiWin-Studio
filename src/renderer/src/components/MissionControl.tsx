@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Check,
   ClipboardList,
+  Download,
   GitBranch,
   GitFork,
   Loader2,
@@ -207,6 +208,7 @@ function taskEventLabel(kind: WorktreeTaskDashboard["events"][number]["kind"], t
     case "merge_completed": return t("mission.auditMerged");
     case "checkpoint_restored": return t("mission.auditRestored");
     case "path_claims_updated": return t("mission.auditClaims");
+    case "task_assignment_updated": return t("mission.auditAssignment");
     case "wsl_copy_created": return t("mission.auditWslCopyCreated");
     case "wsl_patch_imported": return t("mission.auditWslPatchImported");
     case "wsl_copy_discarded": return t("mission.auditWslCopyDiscarded");
@@ -225,7 +227,11 @@ function TaskGovernanceSection(): React.JSX.Element | null {
   const chats = useAppStore((s) => s.chats);
   const [dashboard, setDashboard] = useState<WorktreeTaskDashboard | null>(null);
   const [claimsDraft, setClaimsDraft] = useState<Record<string, string>>({});
+  const [assignmentDraft, setAssignmentDraft] = useState<Record<string, { agent: string; role: string }>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -267,6 +273,45 @@ function TaskGovernanceSection(): React.JSX.Element | null {
     }
   };
 
+  const saveAssignment = async (task: WorktreeTaskDashboardItem): Promise<void> => {
+    if (!activeProjectPath) return;
+    setAssigning(task.taskId);
+    setError(null);
+    try {
+      const current = assignmentDraft[task.taskId] ?? {
+        agent: task.assignment?.agent ?? "",
+        role: task.assignment?.role ?? "",
+      };
+      setDashboard(await window.pi.worktrees.setAssignment(
+        activeProjectPath,
+        task.worktreePath,
+        task.branch,
+        task.taskId,
+        current,
+      ));
+      setAssignmentDraft((drafts) => ({ ...drafts, [task.taskId]: current }));
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setAssigning(null);
+    }
+  };
+
+  const exportAudit = async (): Promise<void> => {
+    if (!activeProjectPath) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const result = await window.pi.worktrees.exportAudit(activeProjectPath);
+      setExportedPath(result.path);
+      await window.pi.system.revealPath(result.path);
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const tasks = dashboard?.tasks ?? [];
   const events = dashboard?.events ?? [];
   if (!dashboard && !error) return null;
@@ -281,22 +326,38 @@ function TaskGovernanceSection(): React.JSX.Element | null {
           </div>
           <p className="pt-0.5 text-[10.5px] text-fg-muted">{t("mission.governanceHint")}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="rounded-lg border border-border p-1.5 text-fg-muted hover:border-border-strong hover:text-accent"
-          title={t("mission.refreshGovernance")}
-        >
-          <RefreshCw size={12} />
-        </button>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            disabled={exporting}
+            onClick={() => void exportAudit()}
+            className="rounded-lg border border-border p-1.5 text-fg-muted hover:border-border-strong hover:text-accent disabled:opacity-40"
+            title={t("mission.exportAudit")}
+          >
+            {exporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="rounded-lg border border-border p-1.5 text-fg-muted hover:border-border-strong hover:text-accent"
+            title={t("mission.refreshGovernance")}
+          >
+            <RefreshCw size={12} />
+          </button>
+        </div>
       </div>
 
       {error && <div className="mb-2 rounded-lg border border-danger/30 bg-danger/10 px-2.5 py-2 text-[11px] text-danger">{error}</div>}
+      {exportedPath && <div className="mb-2 truncate rounded-lg border border-border bg-bg px-2.5 py-2 text-[10.5px] text-fg-muted" title={exportedPath}>{t("mission.auditExported")}: {exportedPath}</div>}
 
       {tasks.length > 0 && (
         <div className="space-y-2">
           {tasks.map((task) => {
             const rawClaims = claimsDraft[task.taskId] ?? task.claimedPaths.join(", ");
+            const rawAssignment = assignmentDraft[task.taskId] ?? {
+              agent: task.assignment?.agent ?? "",
+              role: task.assignment?.role ?? "",
+            };
             return (
               <div key={task.taskId} className="rounded-xl border border-border bg-bg px-3 py-2.5">
                 <div className="flex items-start gap-2">
@@ -321,6 +382,36 @@ function TaskGovernanceSection(): React.JSX.Element | null {
                         </div>
                       </div>
                     )}
+                    <div className="mt-1.5 flex gap-1.5">
+                      <input
+                        value={rawAssignment.agent}
+                        onChange={(event) => setAssignmentDraft((current) => ({
+                          ...current,
+                          [task.taskId]: { ...rawAssignment, agent: event.target.value },
+                        }))}
+                        placeholder={t("mission.taskAgentPlaceholder")}
+                        disabled={task.state === "merged" || assigning === task.taskId}
+                        className="min-w-0 flex-1 rounded-lg border border-border bg-bg-secondary px-2 py-1 text-[10.5px] text-fg outline-none placeholder:text-fg-muted focus:border-accent disabled:opacity-50"
+                      />
+                      <input
+                        value={rawAssignment.role}
+                        onChange={(event) => setAssignmentDraft((current) => ({
+                          ...current,
+                          [task.taskId]: { ...rawAssignment, role: event.target.value },
+                        }))}
+                        placeholder={t("mission.taskRolePlaceholder")}
+                        disabled={task.state === "merged" || assigning === task.taskId}
+                        className="min-w-0 flex-1 rounded-lg border border-border bg-bg-secondary px-2 py-1 text-[10.5px] text-fg outline-none placeholder:text-fg-muted focus:border-accent disabled:opacity-50"
+                      />
+                      <button
+                        type="button"
+                        disabled={task.state === "merged" || assigning === task.taskId}
+                        onClick={() => void saveAssignment(task)}
+                        className="rounded-lg border border-border px-2 py-1 text-[10.5px] text-fg-secondary hover:border-border-strong hover:text-accent disabled:opacity-40"
+                      >
+                        {assigning === task.taskId ? <Loader2 size={11} className="animate-spin" /> : t("mission.saveAssignment")}
+                      </button>
+                    </div>
                     <div className="mt-1.5 flex gap-1.5">
                       <input
                         value={rawClaims}
