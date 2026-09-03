@@ -142,6 +142,7 @@ export const zh = {
     powerShellApproval: "PowerShell 直接运行在 Windows 用户环境。每次 agent bash 调用都需要人工确认，并写入执行审计。",
     wslContainmentTitle: "WSL2 Bubblewrap 隔离验证",
     wslContainmentScope: "实验 Profile：启用后，新建的受控任务会把 bash/read/write/edit/grep/find/ls 路由到同一个原生 WSL 私有副本；默认断网，并需要审核式补丁导入。",
+    wslContainmentNetwork: "WSL 隔离任务暂不提供联网白名单；需要受控联网（如安装依赖）请改用 Docker 的代理白名单 Profile，切勿为 WSL 开启宿主网络。",
     wslContainmentEnable: "为新的受控 WSL2 任务启用 Bubblewrap 隔离",
     wslContainmentEnableHint: "必须选择 WSL2、通过上方验证，并从新的 PiWin 任务 worktree 打开会话。未路由的扩展/MCP 默认禁用；变更只能经补丁导入。",
     dockerSandboxTitle: "Docker 受限执行 Profile",

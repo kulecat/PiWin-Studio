@@ -378,6 +378,27 @@ and recoverable worktree-based agent tasks.
   `PIWIN_WSL_HOST_TOOLS=ask` mode permits only explicitly activated, per-call
   human-approved tools and records the existing policy audit boundary.
 
+### 2026-09-03 — P0/P1/P2 WSL containment verification
+
+- **P0:** reran `pnpm typecheck` and `pnpm build`, then verified the provisioned
+  Ubuntu distribution has Bubblewrap 0.11.1 available. This is a build and
+  runtime prerequisite check; final visual/model-provider acceptance still
+  belongs to a normal desktop-agent session.
+- **P1:** added `pnpm verify:wsl-recovery`, a disposable real-WSL + Git smoke
+  test. It creates a guarded task, edits only its native WSL private copy,
+  calls the preparation path again to simulate an Electron restart, confirms
+  the exact copy and un-imported patch are recovered, then explicitly discards
+  it. The test passed as `WSL_PRIVATE_RECOVERY_SMOKE_OK`. Mission Control's
+  existing orphan-task **Continue task** action is the user-facing resume
+  entrypoint; no patch is imported automatically.
+- **P2:** verified Bubblewrap's default WSL profile denies a real HTTPS
+  attempt (`WSL_NETWORK_DEFAULT_DENY_OK`). Ubuntu currently lacks both
+  `slirp4netns` and `pasta`; installing a rootless NAT helper would still be
+  insufficient because it restores arbitrary direct egress rather than a
+  mandatory destination allowlist. PiWin intentionally keeps WSL fully
+  disconnected and does not add `--share-net`. Tasks that require controlled
+  network access use the existing Docker proxy-allowlist profile instead.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -440,6 +461,12 @@ and recoverable worktree-based agent tasks.
   credential filtering, private `write`/`read` with no host mutation,
   confirmation-gated patch import, and task cleanup all passed
   (`WSL_CONTAINMENT_INTEGRATION_SMOKE_OK`).
+- Ran `pnpm verify:wsl-recovery` against real Ubuntu WSL2: a restart-style
+  re-prepare reused the original native private copy and recovered its
+  un-imported patch before explicit discard (`WSL_PRIVATE_RECOVERY_SMOKE_OK`).
+- Rechecked that the Bubblewrap WSL profile rejects a live HTTPS request
+  (`WSL_NETWORK_DEFAULT_DENY_OK`). The environment has no `slirp4netns` or
+  `pasta`; PiWin intentionally does not weaken the profile with `--share-net`.
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -474,9 +501,10 @@ and recoverable worktree-based agent tasks.
   not a security boundary. WSL2 routing also is not containment: it maps the
   host project into Linux. Docker covers Pi's built-in command and file tools;
   the experimental Bubblewrap profile now covers PiWin's first-party tools,
-  but it has no WSL network allowlist and cannot safely route arbitrary
-  third-party extension/MCP code. Crash-recovery UI for an interrupted WSL
-  patch hand-off remains pending.
+  but it intentionally has no WSL network allowlist and cannot safely route
+  arbitrary third-party extension/MCP code. Resume/import/discard recovery is
+  available through the persisted guarded task record; a richer cross-task
+  patch dashboard remains a possible UX enhancement.
 
 ## Next work
 

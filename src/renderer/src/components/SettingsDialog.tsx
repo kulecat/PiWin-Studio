@@ -877,6 +877,7 @@ function ExecutionTab(): React.JSX.Element {
                   </div>
                   <div className="pt-0.5">{environment.wslContainment.detail}</div>
                   <div className="pt-1 text-warning">{t("settings.wslContainmentScope")}</div>
+                  <div className="pt-1 text-fg-muted">{t("settings.wslContainmentNetwork")}</div>
                   <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-md border border-border bg-bg px-2 py-1.5 text-fg-secondary has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
                     <input
                       type="checkbox"

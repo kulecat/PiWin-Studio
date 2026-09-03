@@ -13,3 +13,5 @@ dist-*/
 .pnpm-store/
 .wt-probe/
 .cursor/
+# Temporary bundle written by `pnpm verify:wsl-recovery`.
+.piwin-wsl-recovery-smoke.mjs

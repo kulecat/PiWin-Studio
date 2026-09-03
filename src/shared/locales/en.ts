@@ -144,6 +144,7 @@ export const en: Messages = {
     powerShellApproval: "PowerShell runs directly in the Windows user environment. Every agent bash call requires human approval and is written to the execution audit.",
     wslContainmentTitle: "WSL2 Bubblewrap containment spike",
     wslContainmentScope: "Experimental profile: when enabled, a new guarded task routes bash/read/write/edit/grep/find/ls through one native WSL private copy, with network disabled and a reviewed patch import.",
+    wslContainmentNetwork: "WSL containment has no network allowlist yet. For controlled network work such as dependency installation, use the Docker proxy-allowlist profile instead; do not expose the WSL host network.",
     wslContainmentEnable: "Enable Bubblewrap containment for new guarded WSL2 tasks",
     wslContainmentEnableHint: "Requires explicit WSL2 selection, the passing probe above, and a new PiWin task worktree. Unrouted extensions/MCP are disabled by default; changes return only by patch import.",
     dockerSandboxTitle: "Restricted Docker profile",

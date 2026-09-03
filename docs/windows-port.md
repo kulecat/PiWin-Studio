@@ -47,11 +47,11 @@ terminals are intentionally outside this agent-tool guard.
 
 ## Experimental WSL2 containment spike
 
-PiWin now performs a capability diagnostic for
+PiWin performs a capability diagnostic for
 [Bubblewrap](https://github.com/containers/bubblewrap) inside the selected
 WSL2 distribution. It is shown in **Settings → Local execution environment**
-as **WSL2 Bubblewrap containment spike**, but it is intentionally not an Agent
-runner or a sandbox setting.
+as **WSL2 Bubblewrap containment spike**. After an explicit WSL2 selection and
+opt-in, it is an experimental sandbox setting for new guarded coding tasks.
 
 The tested profile uses Bubblewrap's user, PID, IPC, UTS, mount, and network
 namespaces, and prevents a process from creating further user namespaces. It
@@ -85,10 +85,22 @@ is an advanced opt-in for reviewed external tools: every activated call still
 requires human approval and audit. Ordinary WSL routing remains unchanged and
 host-adjacent.
 
-Before this profile should be considered production-ready, PiWin still needs
-crash-recovery UX for an interrupted patch hand-off, an independently tested
-opt-in WSL network allowlist, and controlled routes for any third-party tool
-that needs access to the task workspace.
+If PiWin or Windows stops while a private copy exists, the guarded task record
+persists both the WSL distribution and native copy path. From Mission Control,
+choose **Continue task** for the orphaned task; PiWin reconnects to that exact
+copy, preserves its un-imported patch, and again presents only the explicit
+import/discard hand-off. It never automatically imports a patch after a
+restart. A missing copy or mismatched WSL configuration remains a fail-closed
+state that must be explicitly discarded.
+
+The WSL profile deliberately has no network allowlist. A real 2026-09-03
+Ubuntu/WSL2 probe verified that Bubblewrap's profile has no egress, and found
+no `slirp4netns` or `pasta` helper installed. More importantly, rootless NAT
+on its own would restore arbitrary direct egress, not enforce an HTTP(S)
+destination allowlist. PiWin therefore does not add Bubblewrap's
+`--share-net` option. For dependency installation or other controlled network
+work, select Docker's already-tested proxy-allowlist profile; third-party tool
+routes remain a separate boundary.
 
 This scoped approach avoids changing the user's global `/etc/wsl.conf` drive
 mount behavior, which is distribution-wide rather than task-scoped.

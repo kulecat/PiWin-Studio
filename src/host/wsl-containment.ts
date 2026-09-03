@@ -7,9 +7,10 @@
  * namespaces. It hides the Windows mount root and binds exactly one *native
  * WSL private task copy* at `/workspace`.
  *
- * This module deliberately does not route Agent tools yet. Until bash and all
- * first-party file tools share the same private WSL task copy and patch-import
- * hand-off, exposing this as a product sandbox would be misleading.
+ * PiWin routes its first-party `bash`, `read`, `write`, `edit`, `grep`,
+ * `find`, and `ls` tools through this same private copy. Third-party tools
+ * remain outside this boundary by default. The profile deliberately has no
+ * egress: do not add `--share-net` merely to make package installation work.
  */
 
 export type WslContainmentWorkspaceAccess = "readonly" | "readwrite";
