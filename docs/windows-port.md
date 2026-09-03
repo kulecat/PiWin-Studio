@@ -80,10 +80,10 @@ chip exposes the human-confirmed WSL patch import/discard actions.
 This is an experimental, opt-in boundary—not a blanket WSL sandbox. It only
 accepts a clean, active PiWin task worktree, has no network route, and starts
 with external extensions/MCP adapters disabled because they otherwise execute
-in the Electron utility process outside Bubblewrap. `PIWIN_WSL_HOST_TOOLS=ask`
-is an advanced opt-in for reviewed external tools: every activated call still
-requires human approval and audit. Ordinary WSL routing remains unchanged and
-host-adjacent.
+in the Electron utility process outside Bubblewrap. This remains true even
+when `PIWIN_WSL_HOST_TOOLS=ask` is set: `ask` can only permit a PiWin-owned
+host-side tool through a per-call approval; it never loads third-party module
+code. Ordinary WSL routing remains unchanged and host-adjacent.
 
 If PiWin or Windows stops while a private copy exists, the guarded task record
 persists both the WSL distribution and native copy path. From Mission Control,
@@ -104,6 +104,18 @@ routes remain a separate boundary.
 
 This scoped approach avoids changing the user's global `/etc/wsl.conf` drive
 mount behavior, which is distribution-wide rather than task-scoped.
+
+## Gondolin compatibility assessment (P4)
+
+The official Pi Gondolin example is a useful tool-routing reference, but it is
+not enabled as a PiWin profile. Its VM uses a direct `RealFSProvider` mount of
+the host working directory, so guest writes immediately affect the host; that
+does not meet PiWin's private-copy and reviewed-patch boundary. Its Node.js
+requirement is met by this desktop's Node 24.15.0, but QEMU is not installed on
+either Windows PATH or the provisioned Ubuntu WSL distribution. Ubuntu has
+`/dev/kvm`, but no Node.js runtime for a WSL-native test. See
+[the full assessment](./gondolin-evaluation.md) before attempting a dedicated
+WSL/QEMU spike.
 
 ## Docker restricted command profile
 
@@ -137,8 +149,8 @@ $env:PIWIN_DOCKER_CREDENTIAL_ALLOWLIST = "NPM_TOKEN,GITHUB_TOKEN"
 $env:PIWIN_DOCKER_MEMORY = "2g"
 $env:PIWIN_DOCKER_CPUS = "2"
 $env:PIWIN_DOCKER_PIDS_LIMIT = "128"
-# Default: do not load host-side extension/MCP packages. Set `ask` only after
-# reviewing their source; manually enable a tool, then approve every call.
+# External extension/MCP packages are never loaded in an isolated task. `ask`
+# only permits individually approved PiWin-owned host tools.
 $env:PIWIN_DOCKER_HOST_TOOLS = "deny"
 ```
 
@@ -199,20 +211,17 @@ retain them. Tool output redacts known injected values, and the audit records
 the variable names and decision/exit result—never values.
 
 This is a first-party **tool-execution** boundary, not a claim that all Agent
-behavior is isolated. In the default `PIWIN_DOCKER_HOST_TOOLS=deny` mode,
-PiWin does not load external Pi extensions or MCP adapters, and it initially
-deactivates every built-in PiWin tool that is not routed through the private
-Docker workspace. The seven volume-routed file/command tools plus the
-tool-directory controls remain available.
+behavior is isolated. PiWin does not load external Pi extensions or MCP
+adapters in any Docker private-workspace task, including when
+`PIWIN_DOCKER_HOST_TOOLS=ask` is set. That closes the module-load-time escape
+that a tool-call approval cannot cover. PiWin initially deactivates every
+built-in host-side tool that is not routed through the private Docker
+workspace; a manually enabled PiWin-owned host tool still needs approval for
+every actual call and produces audit events. The seven volume-routed
+file/command tools plus the tool-directory controls remain available.
 
-For a reviewed, trusted extension or MCP adapter, set
-`PIWIN_DOCKER_HOST_TOOLS=ask` before launch. Its tools still start inactive;
-after a person explicitly enables one, **every actual tool call** shows an
-approval card and produces `asked` / `approved` / `denied` events in the
-session audit log. This approval begins only at tool-call time: extension code
-may execute while Pi loads it, so never use `ask` for code you have not already
-reviewed. An extension that deliberately delegates work into its own container
-is still responsible for that container's policy.
+A third-party MCP adapter that needs an isolated task workspace must implement
+a reviewed Docker/WSL routing contract before it can be supported here.
 
 The Docker file adapter permits only paths inside the active task worktree and
 rejects symlink resolution outside `/workspace`.

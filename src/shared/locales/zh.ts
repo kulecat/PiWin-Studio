@@ -855,6 +855,7 @@ export const zh = {
     deletePrompt: "删除模板 /{name}？",
     mcpTitle: "MCP 服务器",
     mcpIntro: "通过 pi-mcp-adapter 接入 MCP：默认单个代理工具",
+    mcpIsolationHint: "Docker 私有副本和 WSL Bubblewrap 隔离会话会隔离所有第三方扩展/MCP：配置可保留，但不会加载或执行。需要它们时，请改用非隔离会话，或等待受控适配器实现。",
     mcpGlobal: "全局 mcp.json",
     mcpProject: "项目 .mcp.json",
     serverCount: "{n} 个服务器",

@@ -817,6 +817,10 @@ async function init(msg: HostInit): Promise<void> {
       recordMandatoryToolBoundary(
         `${boundary}: ${privateWorkspaceHostTools.length} host-side tools start disabled; each manually enabled call requires approval.`,
       );
+      recordMandatoryToolBoundary(
+        `${boundary}: Pi extensions and MCP adapters were not loaded. Third-party module code cannot run outside the private workspace during discovery.`,
+        "external_resources",
+      );
     }
     onSandboxStatus((sb) => send({ type: "sandbox", sandbox: sb }));
     onWorldChange((world) => send({ type: "execution_world", world }));

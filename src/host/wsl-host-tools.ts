@@ -33,8 +33,14 @@ export function isWslWorkspaceTool(name: string): boolean {
   return WSL_WORKSPACE_TOOL_NAMES.has(name);
 }
 
+/**
+ * Never load external extensions or MCP adapters in a Bubblewrap task. The
+ * host utility process would execute their module code outside the WSL
+ * boundary before PiWin could display a per-call approval. `ask` remains a
+ * gate for PiWin's own host-side tools only.
+ */
 export function allowExternalWslTools(): boolean {
-  return !wslHostToolsBoundaryActive() || getWslHostToolsMode() === "ask";
+  return !wslHostToolsBoundaryActive();
 }
 
 export function canAgentActivateWslTool(name: string): boolean {

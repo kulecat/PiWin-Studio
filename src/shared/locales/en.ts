@@ -860,6 +860,7 @@ export const en: Messages = {
     deletePrompt: "Delete template /{name}?",
     mcpTitle: "MCP servers",
     mcpIntro: "Connect MCP through pi-mcp-adapter: a single proxy tool by default",
+    mcpIsolationHint: "Docker private-copy and WSL Bubblewrap sessions quarantine all third-party extensions/MCP: configuration is retained, but it is neither loaded nor executed. Use a non-isolated session, or wait for a controlled adapter.",
     mcpGlobal: "Global mcp.json",
     mcpProject: "Project .mcp.json",
     serverCount: "{n} servers",

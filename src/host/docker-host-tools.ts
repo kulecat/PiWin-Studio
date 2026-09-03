@@ -45,9 +45,17 @@ export function isDockerVolumeTool(name: string): boolean {
   return DOCKER_VOLUME_TOOL_NAMES.has(name);
 }
 
-/** Whether Pi's resource loader may load external extensions / MCP adapters. */
+/**
+ * Whether Pi's resource loader may load external extensions / MCP adapters.
+ *
+ * `ask` is deliberately not enough to load third-party code here. An
+ * extension can run arbitrary JavaScript while Pi discovers it, before any
+ * tool-call approval exists. Isolated task profiles therefore quarantine all
+ * external resource packages; `ask` only affects separately registered PiWin
+ * host tools, whose actual calls still require approval.
+ */
 export function allowExternalDockerTools(): boolean {
-  return !dockerHostToolsBoundaryActive() || getDockerHostToolsMode() === "ask";
+  return !dockerHostToolsBoundaryActive();
 }
 
 /** Prevent the model from bypassing the default boundary via tool_activate. */

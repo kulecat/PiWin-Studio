@@ -1226,6 +1226,7 @@ function McpTab(): React.JSX.Element {
         <p className="pt-1 text-xs leading-relaxed text-fg-muted">
           {t("resources.mcpIntro")} {t("resources.mcpHint")}
         </p>
+        <p className="pt-1 text-[11px] leading-relaxed text-warning">{t("resources.mcpIsolationHint")}</p>
       </div>
 
       {info && !info.adapterInstalled && (

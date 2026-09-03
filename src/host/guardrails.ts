@@ -104,8 +104,8 @@ export function setMandatoryToolApprovalGate(
   mandatoryApprovalRule = rule;
 }
 
-export function recordMandatoryToolBoundary(detail: string): void {
-  emit("blocked", "docker_host_tools", detail);
+export function recordMandatoryToolBoundary(detail: string, toolName = "private_workspace_host_tools"): void {
+  emit("blocked", toolName, detail);
 }
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;

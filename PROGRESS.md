@@ -399,6 +399,40 @@ and recoverable worktree-based agent tasks.
   disconnected and does not add `--share-net`. Tasks that require controlled
   network access use the existing Docker proxy-allowlist profile instead.
 
+### 2026-09-03 — P3 external MCP/extension quarantine
+
+- Tightened the isolated Docker-private-copy and WSL Bubblewrap profiles:
+  third-party Pi extensions and MCP adapters are now always excluded from
+  resource loading, including when the legacy
+  `PIWIN_DOCKER_HOST_TOOLS=ask` or `PIWIN_WSL_HOST_TOOLS=ask` compatibility
+  setting is present. A per-tool approval cannot protect against JavaScript
+  that executes while an extension module is being discovered.
+- `ask` now applies only to PiWin's separately registered host-side tools.
+  Those tools still start inactive, require an approval for every call, and
+  retain the existing hash-chained audit events. The host also writes an
+  `external_resources` policy event when it quarantines third-party code.
+- Added an MCP Resources-page warning so saved configuration is not mistaken
+  for code that will load in an isolated task. A future MCP integration must
+  implement a reviewed Docker/WSL routing contract before it is admitted.
+- Added and passed `pnpm verify:isolated-tools`
+  (`ISOLATED_TOOL_BOUNDARY_SMOKE_OK`), confirming that Docker and WSL `ask`
+  modes both keep the external resource loader closed.
+
+### 2026-09-03 — P4 official Gondolin / QEMU assessment
+
+- Read the current official Pi containerization guide and Gondolin example.
+  Gondolin is useful reference architecture for routing all built-in tools and
+  `!` commands to a local micro-VM, but its `RealFSProvider(localCwd)` mount
+  writes through directly to the host checkout. It cannot be enabled as a
+  PiWin sandbox without first replacing that mount with PiWin's native private
+  task copy and reviewed patch hand-off.
+- Preflight found Windows-host Node 24.15.0 (above Gondolin's Node 23.6+
+  requirement), but no QEMU executable on Windows PATH or in Ubuntu WSL. WSL
+  has `/dev/kvm`, but has neither Node.js nor QEMU, so no misleading partial
+  Gondolin install or launch was attempted.
+- Added `docs/gondolin-evaluation.md`, which records the source links,
+  preflight evidence, and the safe future WSL/QEMU spike sequence.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -467,6 +501,9 @@ and recoverable worktree-based agent tasks.
 - Rechecked that the Bubblewrap WSL profile rejects a live HTTPS request
   (`WSL_NETWORK_DEFAULT_DENY_OK`). The environment has no `slirp4netns` or
   `pasta`; PiWin intentionally does not weaken the profile with `--share-net`.
+- Ran `pnpm verify:isolated-tools`: setting Docker or WSL host-tool mode to
+  `ask` still leaves third-party extension/MCP resource loading disabled in an
+  isolated private-workspace task (`ISOLATED_TOOL_BOUNDARY_SMOKE_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -502,9 +539,14 @@ and recoverable worktree-based agent tasks.
   host project into Linux. Docker covers Pi's built-in command and file tools;
   the experimental Bubblewrap profile now covers PiWin's first-party tools,
   but it intentionally has no WSL network allowlist and cannot safely route
-  arbitrary third-party extension/MCP code. Resume/import/discard recovery is
-  available through the persisted guarded task record; a richer cross-task
-  patch dashboard remains a possible UX enhancement.
+  arbitrary third-party extension/MCP code. These packages are now quarantined
+  in isolated sessions rather than merely approval-gated; a controlled adapter
+  contract is still future work. Resume/import/discard recovery is available
+  through the persisted guarded task record; a richer cross-task patch
+  dashboard remains a possible UX enhancement.
+- Gondolin is documented as a research reference only. This machine needs QEMU
+  and Node.js inside Ubuntu WSL for a dedicated disposable-repository spike,
+  followed by a private-copy provider rather than its default direct host mount.
 
 ## Next work
 
