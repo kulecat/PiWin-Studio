@@ -52,6 +52,18 @@ import {
   dockerWorkspaceRoutingActive,
   dockerWriteFile,
 } from "./docker-workspace";
+import {
+  wslAccess,
+  wslExists,
+  wslGrepFiles,
+  wslIsDirectory,
+  wslMkdir,
+  wslProjectFiles,
+  wslReadDir,
+  wslReadFile,
+  wslWorkspaceRoutingActive,
+  wslWriteFile,
+} from "./wsl-workspace";
 
 export type ExecutionWorld = "local" | "vm";
 
@@ -349,9 +361,58 @@ function dockerFileRoutingHere(): boolean {
   return world === "local" && dockerWorkspaceRoutingActive();
 }
 
-function requireDockerFileRouting(): void {
-  if (dockerFileRoutingHere()) return;
-  throw new Error("Docker file tools are unavailable after switching this chat to the cloud VM.");
+/** WSL containment is a local route, but its files live under Bubblewrap `/workspace`. */
+function wslFileRoutingHere(): boolean {
+  return world === "local" && wslWorkspaceRoutingActive();
+}
+
+type PrivateWorkspaceRoute = "docker" | "wsl";
+
+function privateWorkspaceRoute(): PrivateWorkspaceRoute | undefined {
+  if (dockerFileRoutingHere()) return "docker";
+  if (wslFileRoutingHere()) return "wsl";
+  return undefined;
+}
+
+function requirePrivateWorkspaceRoute(): PrivateWorkspaceRoute {
+  const route = privateWorkspaceRoute();
+  if (route) return route;
+  throw new Error("Private workspace file tools are unavailable after switching this chat to the cloud VM.");
+}
+
+async function privateReadFile(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<Buffer> {
+  return route === "docker" ? dockerReadFile(cwd, path) : wslReadFile(cwd, path);
+}
+
+async function privateAccess(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<void> {
+  if (route === "docker") return dockerAccess(cwd, path);
+  return wslAccess(cwd, path);
+}
+
+async function privateWriteFile(route: PrivateWorkspaceRoute, cwd: string, path: string, content: string): Promise<void> {
+  if (route === "docker") return dockerWriteFile(cwd, path, content);
+  return wslWriteFile(cwd, path, content);
+}
+
+async function privateMkdir(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<void> {
+  if (route === "docker") return dockerMkdir(cwd, path);
+  return wslMkdir(cwd, path);
+}
+
+async function privateExists(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<boolean> {
+  return route === "docker" ? dockerExists(cwd, path) : wslExists(cwd, path);
+}
+
+async function privateIsDirectory(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<boolean> {
+  return route === "docker" ? dockerIsDirectory(cwd, path) : wslIsDirectory(cwd, path);
+}
+
+async function privateReadDir(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<string[]> {
+  return route === "docker" ? dockerReadDir(cwd, path) : wslReadDir(cwd, path);
+}
+
+async function privateProjectFiles(route: PrivateWorkspaceRoute, cwd: string, path: string): Promise<string[]> {
+  return route === "docker" ? dockerProjectFiles(cwd, path) : wslProjectFiles(cwd, path);
 }
 
 function matchesToolGlob(relativePath: string, pattern: string): boolean {
@@ -369,15 +430,17 @@ function matchesToolGlob(relativePath: string, pattern: string): boolean {
 const readOps: ReadOperations = {
   readFile: (p) => {
     if (world !== "local") return vmReadFile(p);
-    return dockerFileRoutingHere() ? dockerReadFile(localCwd, p) : localReadOps().readFile(p);
+    const route = privateWorkspaceRoute();
+    return route ? privateReadFile(route, localCwd, p) : localReadOps().readFile(p);
   },
   access: (p) => {
     if (world !== "local") return vmAccess(p);
-    return dockerFileRoutingHere() ? dockerAccess(localCwd, p) : localReadOps().access(p);
+    const route = privateWorkspaceRoute();
+    return route ? privateAccess(route, localCwd, p) : localReadOps().access(p);
   },
   detectImageMimeType: async (p) => {
-    if (!dockerFileRoutingHere()) return null;
-    // MIME detection only uses the requested name; pixels remain in Docker.
+    if (!privateWorkspaceRoute()) return null;
+    // MIME detection only uses the requested name; pixels remain private.
     const ext = nodePath.extname(p).toLowerCase();
     if (ext === ".png") return "image/png";
     if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
@@ -390,7 +453,8 @@ const readOps: ReadOperations = {
 const writeOps: WriteOperations = {
   writeFile: async (p, content) => {
     if (world === "local") {
-      if (dockerFileRoutingHere()) return dockerWriteFile(localCwd, p, content);
+      const route = privateWorkspaceRoute();
+      if (route) return privateWriteFile(route, localCwd, p, content);
       const { writeFile } = await import("node:fs/promises");
       await writeFile(p, content, "utf8");
       return;
@@ -399,7 +463,8 @@ const writeOps: WriteOperations = {
   },
   mkdir: async (dir) => {
     if (world === "local") {
-      if (dockerFileRoutingHere()) return dockerMkdir(localCwd, dir);
+      const route = privateWorkspaceRoute();
+      if (route) return privateMkdir(route, localCwd, dir);
       const { mkdir } = await import("node:fs/promises");
       await mkdir(dir, { recursive: true });
       return;
@@ -415,30 +480,30 @@ const editOps: EditOperations = {
   access: readOps.access,
 };
 
-const dockerLsOps: LsOperations = {
+const privateWorkspaceLsOps: LsOperations = {
   exists: async (p) => {
-    requireDockerFileRouting();
-    return dockerExists(localCwd, p);
+    const route = requirePrivateWorkspaceRoute();
+    return privateExists(route, localCwd, p);
   },
   stat: async (p) => {
-    requireDockerFileRouting();
-    const isDirectory = await dockerIsDirectory(localCwd, p);
+    const route = requirePrivateWorkspaceRoute();
+    const isDirectory = await privateIsDirectory(route, localCwd, p);
     return { isDirectory: () => isDirectory };
   },
   readdir: async (p) => {
-    requireDockerFileRouting();
-    return dockerReadDir(localCwd, p);
+    const route = requirePrivateWorkspaceRoute();
+    return privateReadDir(route, localCwd, p);
   },
 };
 
-const dockerFindOps: FindOperations = {
+const privateWorkspaceFindOps: FindOperations = {
   exists: async (p) => {
-    requireDockerFileRouting();
-    return dockerExists(localCwd, p);
+    const route = requirePrivateWorkspaceRoute();
+    return privateExists(route, localCwd, p);
   },
   glob: async (pattern, searchPath, options) => {
-    requireDockerFileRouting();
-    const files = await dockerProjectFiles(localCwd, searchPath);
+    const route = requirePrivateWorkspaceRoute();
+    const files = await privateProjectFiles(route, localCwd, searchPath);
     return files.filter((entry) => {
       const relativePath = nodePath.relative(searchPath, entry).split(nodePath.sep).join("/");
       return (
@@ -449,7 +514,7 @@ const dockerFindOps: FindOperations = {
   },
 };
 
-function createDockerGrepToolDefinition(cwd: string): ToolDefinition {
+function createPrivateWorkspaceGrepToolDefinition(cwd: string): ToolDefinition {
   const definition = createGrepToolDefinition(cwd);
   return {
     ...definition,
@@ -457,30 +522,33 @@ function createDockerGrepToolDefinition(cwd: string): ToolDefinition {
       content: Array<{ type: "text"; text: string }>;
       details: GrepToolDetails | undefined;
     }> {
-      requireDockerFileRouting();
+      const route = requirePrivateWorkspaceRoute();
       if (signal?.aborted) throw new Error("Operation aborted");
       const searchPath = nodePath.resolve(cwd, params.path || ".");
-      const files = await dockerProjectFiles(localCwd, searchPath);
+      const files = await privateProjectFiles(route, localCwd, searchPath);
       const selected = params.glob
         ? files.filter((entry) => matchesToolGlob(nodePath.relative(searchPath, entry), params.glob!))
         : files;
       if (selected.length === 0) {
         return { content: [{ type: "text", text: "No matches found" }], details: undefined };
       }
-      const result = await dockerGrepFiles(localCwd, selected, {
+      const grepOptions = {
         pattern: params.pattern,
         literal: params.literal,
         ignoreCase: params.ignoreCase,
         context: params.context,
         signal,
-      });
+      };
+      const result = route === "docker"
+        ? await dockerGrepFiles(localCwd, selected, grepOptions)
+        : await wslGrepFiles(localCwd, selected, grepOptions);
       // grep's 1 means no matches. GNU xargs maps that to 123, which the
       // adapter normalizes back to 1 before this point.
       if (result.exitCode === 1) {
         return { content: [{ type: "text", text: "No matches found" }], details: undefined };
       }
       if (result.exitCode !== 0) {
-        throw new Error(result.stderr.toString("utf8").trim() || `Docker grep exited with code ${result.exitCode}.`);
+        throw new Error(result.stderr.toString("utf8").trim() || `${route === "docker" ? "Docker" : "WSL"} grep exited with code ${result.exitCode}.`);
       }
 
       const effectiveLimit = Math.max(1, params.limit ?? 100);
@@ -521,8 +589,8 @@ function createDockerGrepToolDefinition(cwd: string): ToolDefinition {
 }
 
 /**
- * 世界路由版工具。Docker 会额外覆盖 grep/find/ls，使文件枚举与内容
- * 搜索也面向同一个私有 task volume，而不是宿主 worktree。
+ * 世界路由版工具。Docker and WSL containment additionally override
+ * grep/find/ls so search sees the same private workspace as bash/edit.
  */
 export function buildWorldToolDefinitions(cwd: string): ToolDefinition[] {
   localCwd = cwd;
@@ -532,11 +600,11 @@ export function buildWorldToolDefinitions(cwd: string): ToolDefinition[] {
     createWriteToolDefinition(cwd, { operations: writeOps }) as unknown as ToolDefinition,
     createEditToolDefinition(cwd, { operations: editOps }) as unknown as ToolDefinition,
   ];
-  if (dockerWorkspaceRoutingActive()) {
+  if (privateWorkspaceRoute()) {
     definitions.push(
-      createLsToolDefinition(cwd, { operations: dockerLsOps }) as unknown as ToolDefinition,
-      createFindToolDefinition(cwd, { operations: dockerFindOps }) as unknown as ToolDefinition,
-      createDockerGrepToolDefinition(cwd),
+      createLsToolDefinition(cwd, { operations: privateWorkspaceLsOps }) as unknown as ToolDefinition,
+      createFindToolDefinition(cwd, { operations: privateWorkspaceFindOps }) as unknown as ToolDefinition,
+      createPrivateWorkspaceGrepToolDefinition(cwd),
     );
   }
   return definitions;

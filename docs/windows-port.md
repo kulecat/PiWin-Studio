@@ -62,7 +62,7 @@ network route. Its only intended project mount is `/workspace`, bound from a
 **native WSL private task copy**; the builder rejects a task source below the
 Windows mount root, so a writable profile cannot bind the Windows worktree.
 
-PiWin now has the backend lifecycle needed for that future task copy: it seeds
+PiWin has the lifecycle needed for a contained task copy: it seeds
 `$HOME/.piwin/task-sandboxes/<task-id>` from a clean, guarded Git worktree,
 filters Git metadata/common credential files/build artifacts, records the copy
 locally, previews a binary Git patch, validates it against the host task, and
@@ -70,16 +70,25 @@ requires explicit confirmation before import or discard. Copy paths are
 verified against the task UUID before any WSL-side deletion. Lifecycle events
 appear in the local task audit ledger.
 
-This is deliberately **not connected to Agent routing or the desktop control
-yet**. A green probe and the backend hand-off do not mean PiWin has a complete
-WSL sandbox. Before the profile can become selectable we still need to:
+When **Settings → Local execution environment → Enable Bubblewrap containment
+for new guarded WSL2 tasks** is saved with an explicit **WSL2** runner, a new
+PiWin-managed task session activates this profile. It runs `bash`, `read`,
+`write`, `edit`, `grep`, `find`, and `ls` through the same Bubblewrap
+`/workspace`; file paths and symlink targets are checked there, and the task
+chip exposes the human-confirmed WSL patch import/discard actions.
 
-1. route `bash`, `read`, `write`, `edit`, `grep`, `find`, and `ls` through that
-   same native copy, with path and symlink containment;
-2. expose the reviewed WSL patch hand-off in the task UI and crash-recovery
-   flow; and
-3. separately design any opt-in WSL network allowlist and third-party
-   extension/MCP boundary.
+This is an experimental, opt-in boundary—not a blanket WSL sandbox. It only
+accepts a clean, active PiWin task worktree, has no network route, and starts
+with external extensions/MCP adapters disabled because they otherwise execute
+in the Electron utility process outside Bubblewrap. `PIWIN_WSL_HOST_TOOLS=ask`
+is an advanced opt-in for reviewed external tools: every activated call still
+requires human approval and audit. Ordinary WSL routing remains unchanged and
+host-adjacent.
+
+Before this profile should be considered production-ready, PiWin still needs
+crash-recovery UX for an interrupted patch hand-off, an independently tested
+opt-in WSL network allowlist, and controlled routes for any third-party tool
+that needs access to the task workspace.
 
 This scoped approach avoids changing the user's global `/etc/wsl.conf` drive
 mount behavior, which is distribution-wide rather than task-scoped.

@@ -6,7 +6,12 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { ChatCreateOptions, CustomProviderDraft, HostCommand, ScheduledTask } from "@shared/protocol";
 import { IPC } from "@shared/protocol";
 import { TITLEBAR_HEIGHT } from "@shared/titlebar";
-import { applyExecutionConfig, inspectExecutionEnvironment, isDockerPrivateCopyModeActive } from "../host/windows-execution";
+import {
+  applyExecutionConfig,
+  inspectExecutionEnvironment,
+  isDockerPrivateCopyModeActive,
+  isWslContainmentModeConfigured,
+} from "../host/windows-execution";
 import { createChat, disposeAllChats, disposeChat, sendChatCommand } from "./chats";
 import { getAppVersions, getMonitorSnapshot, killAgentProcess } from "./agent-monitor";
 import { checkForUpdates } from "./updates";
@@ -99,17 +104,21 @@ import {
 import {
   createWorktree,
   discardDockerTaskPatch,
+  discardWslTaskPatch,
   discardTask,
   findManagedTaskForWorktreePath,
   importDockerTaskPatch,
+  importWslTaskPatch,
   isGitRepo,
   listBranches,
   listWorktrees,
   mergeWorktree,
   queueWorktreeMerge,
   prepareDockerTaskWorkspaceForChat,
+  prepareWslTaskWorkspaceForChat,
   prepareWorktreeReview,
   previewDockerTaskPatch,
+  previewWslTaskPatch,
   removeWorktree,
   restoreWorktreeCheckpoint,
   setWorktreePathClaims,
@@ -235,12 +244,26 @@ function registerIpc(): void {
   registerEditorIpc();
   registerFileWatchIpc();
   ipcMain.handle(IPC.chatCreate, async (event, options: ChatCreateOptions) => {
+    const config = getConfig();
+    const executionEnvironment = applyExecutionConfig(process.env, config);
     const managedTask = await findManagedTaskForWorktreePath(options.cwd);
-    const dockerTask = isDockerPrivateCopyModeActive()
+    const dockerTask = isDockerPrivateCopyModeActive(executionEnvironment)
       ? await prepareDockerTaskWorkspaceForChat(options.cwd)
       : undefined;
+    let wslTask: Awaited<ReturnType<typeof prepareWslTaskWorkspaceForChat>> | undefined;
+    if (options.kind !== "daily" && isWslContainmentModeConfigured(executionEnvironment)) {
+      const containment = inspectExecutionEnvironment(executionEnvironment).wslContainment;
+      if (!containment?.available) {
+        throw new Error(`WSL Bubblewrap 隔离验证未通过：${containment?.detail ?? "WSL2 不可用"}`);
+      }
+      wslTask = await prepareWslTaskWorkspaceForChat(options.cwd, {
+        distribution: config.wslDistribution ?? undefined,
+        mountRoot: config.wslMountRoot ?? undefined,
+      });
+    }
     const chatId = createChat(event.sender, options, {
       dockerWorkspaceVolume: dockerTask?.volume,
+      wslPrivateWorkspace: wslTask?.path,
     });
     return { chatId, worktree: managedTask };
   });
@@ -457,6 +480,21 @@ function registerIpc(): void {
     IPC.worktreeDockerDiscard,
     (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
       discardDockerTaskPatch(path, wt, branch, taskId, confirmed),
+  );
+  ipcMain.handle(
+    IPC.worktreeWslPatch,
+    (_e, path: string, wt: string, branch: string, taskId: string) =>
+      previewWslTaskPatch(path, wt, branch, taskId),
+  );
+  ipcMain.handle(
+    IPC.worktreeWslImport,
+    (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
+      importWslTaskPatch(path, wt, branch, taskId, confirmed),
+  );
+  ipcMain.handle(
+    IPC.worktreeWslDiscard,
+    (_e, path: string, wt: string, branch: string, taskId: string, confirmed: boolean) =>
+      discardWslTaskPatch(path, wt, branch, taskId, confirmed),
   );
   ipcMain.handle(IPC.deploymentsConfigured, () => deploymentsConfigured());
   ipcMain.handle(IPC.deploymentsProjects, () => listVercelProjects());

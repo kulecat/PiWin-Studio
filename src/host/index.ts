@@ -84,7 +84,12 @@ import {
 } from "./docker-credentials";
 import { buildDockerCredentialExecTool } from "./docker-credential-tool";
 import { ensureDockerEgressProxy, stopDockerEgressProxy } from "./docker-egress";
-import { getDockerSandboxProfile, isDockerHostWriteBlocked } from "./windows-execution";
+import {
+  getDockerSandboxProfile,
+  isDockerHostWriteBlocked,
+  isWslContainmentModeConfigured,
+  isWslPrivateWorkspaceRoutingActive,
+} from "./windows-execution";
 import {
   allowExternalDockerTools,
   canAgentActivateDockerTool,
@@ -92,6 +97,13 @@ import {
   getDockerHostToolsMode,
   isDockerVolumeTool,
 } from "./docker-host-tools";
+import {
+  allowExternalWslTools,
+  canAgentActivateWslTool,
+  getWslHostToolsMode,
+  isWslWorkspaceTool,
+  wslHostToolsBoundaryActive,
+} from "./wsl-host-tools";
 
 interface ParentPort {
   on(event: "message", listener: (e: { data: HostInbound }) => void): void;
@@ -214,22 +226,24 @@ function applyWorldToolActivation(world: "local" | "vm"): void {
 }
 
 /**
- * Docker contains only PiWin's volume-routed core tools. Keep every other
- * capability out of the active set by default; a person may enable a trusted
- * one in the Tools UI, but its actual call still goes through guardrails.
+ * Docker volumes and WSL Bubblewrap both cover only PiWin's routed core
+ * tools. Keep every other capability out of the active set by default; a
+ * person may enable a reviewed one only through the explicit `ask` mode.
  */
-function applyDockerHostToolBoundary(s: AgentSession): string[] {
-  if (!dockerHostToolsBoundaryActive()) {
+function applyPrivateWorkspaceHostToolBoundary(s: AgentSession): string[] {
+  const dockerActive = dockerHostToolsBoundaryActive();
+  const wslActive = wslHostToolsBoundaryActive();
+  if (!dockerActive && !wslActive) {
     setMandatoryToolApprovalGate([]);
     return [];
   }
   const hostTools = s
     .getAllTools()
     .map((tool) => tool.name)
-    .filter((name) => !isDockerVolumeTool(name));
+    .filter((name) => !(dockerActive ? isDockerVolumeTool(name) : isWslWorkspaceTool(name)));
   const hostToolSet = new Set(hostTools);
   s.setActiveToolsByName(s.getActiveToolNames().filter((name) => !hostToolSet.has(name)));
-  setMandatoryToolApprovalGate(hostTools, ht("host.dockerHostToolApproval"));
+  setMandatoryToolApprovalGate(hostTools, ht("host.privateHostToolApproval"));
   return hostTools;
 }
 
@@ -350,7 +364,7 @@ async function applyPendingHarnessChange(): Promise<void> {
       harnessState.extraSystemPrompt = change.extraSystemPrompt;
     }
     await s.reload();
-    applyDockerHostToolBoundary(s);
+    applyPrivateWorkspaceHostToolBoundary(s);
     send({ type: "harness", harness: serializeHarness() });
     send({ type: "state", snapshot: snapshot() });
   } catch (err) {
@@ -616,6 +630,11 @@ async function init(msg: HostInit): Promise<void> {
   }
 
   try {
+    // Do not silently fall back to host file tools if a containment-enabled
+    // session was launched without its task-specific native WSL copy.
+    if (isWslContainmentModeConfigured() && !isWslPrivateWorkspaceRoutingActive()) {
+      throw new Error("WSL containment is enabled but the native private task workspace is unavailable.");
+    }
     if (isDockerHostWriteBlocked()) {
       await ensureDockerReadonlyCredentialSnapshot(chatId, cwd, getDockerSandboxProfile());
     }
@@ -626,10 +645,10 @@ async function init(msg: HostInit): Promise<void> {
       const services = await createAgentSessionServices({
         cwd: args.cwd,
         resourceLoaderOptions: {
-          // In Docker's default mode do not even load resource extensions.
+          // In an isolated private-workspace profile do not even load resource extensions.
           // Extension modules may execute at load time, which is earlier than
           // the per-tool approval gate. Inline PiWin guardrails still load.
-          noExtensions: !allowExternalDockerTools(),
+          noExtensions: !allowExternalDockerTools() || !allowExternalWslTools(),
           skillsOverride: (base) => {
             fullSkills = base.skills;
             return {
@@ -712,8 +731,8 @@ async function init(msg: HostInit): Promise<void> {
             buildBrowserTool(),
             ...(isDockerHostWriteBlocked() ? [buildDockerCredentialExecTool(() => cwd)] : []),
             ...buildDisclosureTools(() => session, {
-              canActivate: canAgentActivateDockerTool,
-              blockedMessage: (name) => ht("host.dockerHostToolActivationBlocked", { name }),
+              canActivate: (name) => canAgentActivateDockerTool(name) && canAgentActivateWslTool(name),
+              blockedMessage: (name) => ht("host.privateHostToolActivationBlocked", { name }),
             }),
             buildCodeRunTool(),
             buildSelfTuneTool(),
@@ -769,7 +788,7 @@ async function init(msg: HostInit): Promise<void> {
         commandRules: [...guardrails.commandRules, ...preset.guardrails.commandRules],
       });
     }
-    const dockerHostTools = applyDockerHostToolBoundary(session);
+    const privateWorkspaceHostTools = applyPrivateWorkspaceHostToolBoundary(session);
     trajectory = createTrajectoryRecorder({
       capture: captureAssembly,
       emit: (steps) => send({ type: "trajectory", steps }),
@@ -791,9 +810,12 @@ async function init(msg: HostInit): Promise<void> {
         }
       },
     });
-    if (dockerHostTools.length > 0) {
+    if (privateWorkspaceHostTools.length > 0) {
+      const boundary = wslHostToolsBoundaryActive()
+        ? `WSL Bubblewrap ${getWslHostToolsMode()} mode`
+        : `Docker ${getDockerHostToolsMode()} mode`;
       recordMandatoryToolBoundary(
-        `Docker ${getDockerHostToolsMode()} mode: ${dockerHostTools.length} host-side tools start disabled; each manually enabled call requires approval.`,
+        `${boundary}: ${privateWorkspaceHostTools.length} host-side tools start disabled; each manually enabled call requires approval.`,
       );
     }
     onSandboxStatus((sb) => send({ type: "sandbox", sandbox: sb }));
@@ -1080,7 +1102,7 @@ async function handleCommand(msg: HostInbound): Promise<void> {
         harnessState.disabledExtensions = new Set(msg.disabledExtensions);
         harnessState.extraSystemPrompt = msg.extraSystemPrompt;
         await s.reload();
-        applyDockerHostToolBoundary(s);
+        applyPrivateWorkspaceHostToolBoundary(s);
         send({ type: "harness", harness: serializeHarness() });
         send({ type: "state", snapshot: snapshot() });
         sendCommands();
@@ -1114,7 +1136,7 @@ async function handleCommand(msg: HostInbound): Promise<void> {
       }
       setWorld(msg.world);
       applyWorldToolActivation(msg.world);
-      applyDockerHostToolBoundary(s);
+      applyPrivateWorkspaceHostToolBoundary(s);
       send({ type: "harness", harness: serializeHarness() });
       send({ type: "state", snapshot: snapshot() });
       break;

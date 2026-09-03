@@ -740,6 +740,7 @@ function ExecutionTab(): React.JSX.Element {
   const [runnerPreference, setRunnerPreference] = useState<"" | "auto" | "powershell" | "wsl">("");
   const [wslDistribution, setWslDistribution] = useState("");
   const [wslMountRoot, setWslMountRoot] = useState("/mnt");
+  const [wslContainmentEnabled, setWslContainmentEnabled] = useState(false);
   const [savingPreferences, setSavingPreferences] = useState(false);
 
   const refresh = (): void => {
@@ -756,6 +757,7 @@ function ExecutionTab(): React.JSX.Element {
       setRunnerPreference(config.executionRunner ?? "");
       setWslDistribution(config.wslDistribution ?? "");
       setWslMountRoot(config.wslMountRoot ?? "/mnt");
+      setWslContainmentEnabled(Boolean(config.wslContainmentEnabled));
     });
   }, []);
 
@@ -766,6 +768,7 @@ function ExecutionTab(): React.JSX.Element {
         executionRunner: runnerPreference || null,
         wslDistribution: runnerPreference ? wslDistribution.trim() || null : null,
         wslMountRoot: runnerPreference ? wslMountRoot.trim() || null : null,
+        wslContainmentEnabled: runnerPreference === "wsl" && wslContainmentEnabled,
       })
       .then(() => refresh())
       .finally(() => setSavingPreferences(false));
@@ -874,6 +877,19 @@ function ExecutionTab(): React.JSX.Element {
                   </div>
                   <div className="pt-0.5">{environment.wslContainment.detail}</div>
                   <div className="pt-1 text-warning">{t("settings.wslContainmentScope")}</div>
+                  <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-md border border-border bg-bg px-2 py-1.5 text-fg-secondary has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+                    <input
+                      type="checkbox"
+                      checked={wslContainmentEnabled}
+                      onChange={(event) => setWslContainmentEnabled(event.target.checked)}
+                      disabled={savingPreferences || runnerPreference !== "wsl" || !environment.wslContainment.available}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <span>
+                      <span className="font-medium text-fg">{t("settings.wslContainmentEnable")}</span>
+                      <span className="block pt-0.5 text-fg-muted">{t("settings.wslContainmentEnableHint")}</span>
+                    </span>
+                  </label>
                 </div>
               )}
             </div>

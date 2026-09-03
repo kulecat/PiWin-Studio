@@ -360,6 +360,24 @@ and recoverable worktree-based agent tasks.
   `bash` or file tool has been rerouted yet. That prevents a misleading state
   where commands would be isolated but file edits still target the host.
 
+### 2026-09-03 — Experimental WSL Bubblewrap task profile
+
+- Added an explicit Settings opt-in for new **WSL2** task sessions. It creates
+  a native WSL private copy before the agent process starts, then passes only
+  that copy to the selected distribution's Bubblewrap profile. Normal WSL2
+  routing is unchanged.
+- `bash`, `read`, `write`, `edit`, `grep`, `find`, and `ls` now share the
+  profile's `/workspace`; host-path inputs are translated and bounded there,
+  including symlink checks for existing and write-target paths. The profile
+  hides Windows mount roots, clears its environment, and has no network route.
+- Added WSL patch preview/import/discard IPC and the guarded-task chip UI.
+  Import still performs `git apply --check` and asks for confirmation before
+  touching the Windows task worktree.
+- External extensions and MCP adapters are disabled by default because they
+  execute in the Electron utility process, outside Bubblewrap. The advanced
+  `PIWIN_WSL_HOST_TOOLS=ask` mode permits only explicitly activated, per-call
+  human-approved tools and records the existing policy audit boundary.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -417,6 +435,11 @@ and recoverable worktree-based agent tasks.
   filtering, native copy creation, untracked-file patch preview, confirmation
   gate, host `git apply` validation/import, WSL copy retirement, and task
   cleanup all passed (`WSL_PRIVATE_COPY_SMOKE_OK`).
+- Ran an end-to-end Bubblewrap WSL tool-route smoke test against Ubuntu:
+  `/workspace` mapping, no `/mnt/c`, empty `$HOME`, no default network route,
+  credential filtering, private `write`/`read` with no host mutation,
+  confirmation-gated patch import, and task cleanup all passed
+  (`WSL_CONTAINMENT_INTEGRATION_SMOKE_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -450,17 +473,17 @@ and recoverable worktree-based agent tasks.
 - PowerShell requires agent-call approval but is still a convenience runner,
   not a security boundary. WSL2 routing also is not containment: it maps the
   host project into Linux. Docker covers Pi's built-in command and file tools;
-  the Bubblewrap probe and native-copy hand-off are not yet an Agent sandbox.
-  Unified WSL first-party routing, its desktop hand-off UI, WSL network policy,
-  and third-party extension/MCP routing remain pending.
+  the experimental Bubblewrap profile now covers PiWin's first-party tools,
+  but it has no WSL network allowlist and cannot safely route arbitrary
+  third-party extension/MCP code. Crash-recovery UI for an interrupted WSL
+  patch hand-off remains pending.
 
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer, including Docker
    private-patch lifecycle events and task-ledger links.
-2. Route every WSL `bash` and first-party file tool through the verified native
-   task copy, then expose its reviewed patch import in the task UI before
-   exposing Bubblewrap as an Agent sandbox.
+2. Add crash-recovery UI for interrupted WSL patch hand-offs and an
+   independently tested opt-in WSL network allowlist; retain default denial.
 3. Extend the non-Docker policy layer with destination-specific network rules
    and controlled routing for third-party extensions/MCP tools.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as

@@ -32,19 +32,26 @@ function forkHost(
   servicePrefix: string,
   label?: string,
   dockerWorkspaceVolume?: string,
+  wslPrivateWorkspace?: string,
 ): UtilityProcess {
   const hostPath = join(import.meta.dirname, "host.js");
   const serviceName = `${servicePrefix}-${chatId.slice(0, 8)}`;
+  const executionEnvironment = applyExecutionConfig(process.env, getConfig());
+  // Daily chats and ordinary project sessions must never inherit a
+  // containment preference without the task-specific private workspace that
+  // makes the profile safe.
+  if (!wslPrivateWorkspace) delete executionEnvironment.PIWIN_WSL_CONTAINMENT;
   const proc = utilityProcess.fork(hostPath, [], {
     serviceName,
     cwd,
     env: {
-      ...applyExecutionConfig(process.env, getConfig()),
+      ...executionEnvironment,
       ...(getConfig().e2bApiKey ? { E2B_API_KEY: getConfig().e2bApiKey } : {}),
       ...(getConfig().tavilyApiKey ? { TAVILY_API_KEY: getConfig().tavilyApiKey } : {}),
       ...(getConfig().vercelToken ? { VERCEL_TOKEN: getConfig().vercelToken } : {}),
       ...(getConfig().vercelTeamId ? { VERCEL_TEAM_ID: getConfig().vercelTeamId } : {}),
       ...(dockerWorkspaceVolume ? { PIWIN_DOCKER_WORKSPACE_VOLUME: dockerWorkspaceVolume } : {}),
+      ...(wslPrivateWorkspace ? { PIWIN_WSL_PRIVATE_WORKSPACE: wslPrivateWorkspace } : {}),
     },
   });
   trackAgentProcess(proc, {
@@ -60,10 +67,17 @@ function forkHost(
 export function createChat(
   webContents: WebContents,
   options: ChatCreateOptions,
-  execution?: { dockerWorkspaceVolume?: string },
+  execution?: { dockerWorkspaceVolume?: string; wslPrivateWorkspace?: string },
 ): string {
   const chatId = randomUUID();
-  const proc = forkHost(chatId, options.cwd, "pi-chat", undefined, execution?.dockerWorkspaceVolume);
+  const proc = forkHost(
+    chatId,
+    options.cwd,
+    "pi-chat",
+    undefined,
+    execution?.dockerWorkspaceVolume,
+    execution?.wslPrivateWorkspace,
+  );
 
   const entry: ChatProcess = { chatId, proc, webContents };
   chats.set(chatId, entry);

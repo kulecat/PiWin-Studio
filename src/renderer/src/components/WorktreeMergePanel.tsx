@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Download, GitBranch, GitMerge, ListOrdered, Loader2, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
-import type { DockerTaskPatchPreview, WorktreeMergeResult, WorktreeStatusInfo } from "@shared/protocol";
+import type { DockerTaskPatchPreview, WslTaskPatchPreview, WorktreeMergeResult, WorktreeStatusInfo } from "@shared/protocol";
 import { useAppStore, type ChatState } from "@/stores/app-store";
 import { cn } from "@/lib/cn";
 import { useT } from "@/lib/i18n";
@@ -15,6 +15,7 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<WorktreeStatusInfo | null>(null);
   const [dockerPatch, setDockerPatch] = useState<DockerTaskPatchPreview | null>(null);
+  const [wslPatch, setWslPatch] = useState<WslTaskPatchPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [merging, setMerging] = useState(false);
@@ -23,6 +24,7 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
   const [result, setResult] = useState<WorktreeMergeResult | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [dockerBusy, setDockerBusy] = useState(false);
+  const [wslBusy, setWslBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const wt = chat.worktree;
 
@@ -30,6 +32,7 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
     if (!wt) return;
     setStatus(null);
     setDockerPatch(null);
+    setWslPatch(null);
     setError(null);
     setResult(null);
     window.pi.worktrees
@@ -40,6 +43,10 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
       window.pi.worktrees
         .dockerPatch(wt.projectPath, chat.cwd, wt.branch, wt.taskId)
         .then(setDockerPatch)
+        .catch((e: Error) => setError(e.message));
+      window.pi.worktrees
+        .wslPatch(wt.projectPath, chat.cwd, wt.branch, wt.taskId)
+        .then(setWslPatch)
         .catch((e: Error) => setError(e.message));
     }
   };
@@ -269,6 +276,78 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
     }
   };
 
+  const doImportWslPatch = async (): Promise<void> => {
+    if (!wt.taskId) return;
+    setWslBusy(true);
+    setError(null);
+    try {
+      let next = await window.pi.worktrees.importWslPatch(
+        wt.projectPath,
+        chat.cwd,
+        wt.branch,
+        wt.taskId,
+        false,
+      );
+      if (next.requiresConfirmation) {
+        const confirmed = window.confirm(t("worktree.wslImportConfirm", { n: next.changedFiles.length }));
+        if (!confirmed) return;
+        next = await window.pi.worktrees.importWslPatch(
+          wt.projectPath,
+          chat.cwd,
+          wt.branch,
+          wt.taskId,
+          true,
+        );
+      }
+      if (!next.imported) {
+        setError(next.error ?? t("worktree.wslImportFailed"));
+        return;
+      }
+      setWslPatch({ state: "imported", changedFiles: [], patchBytes: 0, error: next.error });
+      setStatus(await window.pi.worktrees.status(wt.projectPath, chat.cwd, wt.branch, wt.taskId));
+      if (next.error) setError(next.error);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setWslBusy(false);
+    }
+  };
+
+  const doDiscardWslPatch = async (): Promise<void> => {
+    if (!wt.taskId) return;
+    setWslBusy(true);
+    setError(null);
+    try {
+      let next = await window.pi.worktrees.discardWslPatch(
+        wt.projectPath,
+        chat.cwd,
+        wt.branch,
+        wt.taskId,
+        false,
+      );
+      if (next.requiresConfirmation) {
+        const confirmed = window.confirm(t("worktree.wslDiscardConfirm", { n: next.changedFiles.length }));
+        if (!confirmed) return;
+        next = await window.pi.worktrees.discardWslPatch(
+          wt.projectPath,
+          chat.cwd,
+          wt.branch,
+          wt.taskId,
+          true,
+        );
+      }
+      if (!next.discarded) {
+        setError(next.error ?? t("worktree.wslDiscardFailed"));
+        return;
+      }
+      setWslPatch({ state: "discarded", changedFiles: [], patchBytes: 0 });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setWslBusy(false);
+    }
+  };
+
   const task = status?.task;
   const pending = status ? status.ahead + (status.dirtyFiles > 0 ? 1 : 0) : 0;
   const changedAfterReview = task?.taskChangedAfterReview ?? false;
@@ -277,6 +356,7 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
   const queued = task?.state === "merge_queued";
   const canMerge = reviewReady && !targetMoved && !chat.isStreaming;
   const dockerCopyReady = dockerPatch?.state === "ready";
+  const wslCopyReady = wslPatch?.state === "ready";
 
   return (
     <div ref={ref} className="relative inline-flex shrink-0 translate-y-0.5">
@@ -387,6 +467,46 @@ export function WorktreeMergePanel({ chat }: { chat: ChatState }): React.JSX.Ele
                     >
                       <Trash2 size={11} />
                       {t("worktree.discardDocker")}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {wslCopyReady && (
+                <div className="mb-2 rounded-lg border border-border bg-bg px-2 py-1.5 text-[10.5px] leading-relaxed text-fg-muted">
+                  <div className="flex items-center gap-1 text-fg-secondary">
+                    <ShieldCheck size={11} className="text-accent" />
+                    {t("worktree.wslCopy")}
+                  </div>
+                  {wslPatch.error ? (
+                    <div className="pt-1 text-danger">{wslPatch.error}</div>
+                  ) : wslPatch.changedFiles.length > 0 ? (
+                    <div className="pt-1">{t("worktree.wslChanges", { n: wslPatch.changedFiles.length })}</div>
+                  ) : (
+                    <div className="pt-1">{t("worktree.wslNoChanges")}</div>
+                  )}
+                  <div className="mt-1.5 flex gap-1.5">
+                    {wslPatch.changedFiles.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={wslBusy || chat.isStreaming || Boolean(wslPatch.error)}
+                        onClick={() => void doImportWslPatch()}
+                        title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-md bg-accent px-2 py-1.5 text-[10.5px] font-medium text-accent-fg hover:bg-accent-hover disabled:opacity-40"
+                      >
+                        {wslBusy ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                        {t("worktree.importWsl")}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={wslBusy || chat.isStreaming}
+                      onClick={() => void doDiscardWslPatch()}
+                      title={chat.isStreaming ? t("worktree.waitAgent") : undefined}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-[10.5px] text-fg-secondary hover:border-danger/40 hover:text-danger disabled:opacity-40"
+                    >
+                      <Trash2 size={11} />
+                      {t("worktree.discardWsl")}
                     </button>
                   </div>
                 </div>

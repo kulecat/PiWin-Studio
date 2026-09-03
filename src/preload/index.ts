@@ -49,6 +49,9 @@ import type {
   DockerTaskPatchDiscardResult,
   DockerTaskPatchImportResult,
   DockerTaskPatchPreview,
+  WslTaskPatchDiscardResult,
+  WslTaskPatchImportResult,
+  WslTaskPatchPreview,
   SandboxStatusPayload,
   UpdateCheckPayload,
 } from "@shared/protocol";
@@ -340,6 +343,29 @@ const api = {
       confirmed: boolean,
     ): Promise<DockerTaskPatchDiscardResult> =>
       ipcRenderer.invoke(IPC.worktreeDockerDiscard, path, wt, branch, taskId, confirmed),
+    wslPatch: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+    ): Promise<WslTaskPatchPreview> =>
+      ipcRenderer.invoke(IPC.worktreeWslPatch, path, wt, branch, taskId),
+    importWslPatch: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      confirmed: boolean,
+    ): Promise<WslTaskPatchImportResult> =>
+      ipcRenderer.invoke(IPC.worktreeWslImport, path, wt, branch, taskId, confirmed),
+    discardWslPatch: (
+      path: string,
+      wt: string,
+      branch: string,
+      taskId: string,
+      confirmed: boolean,
+    ): Promise<WslTaskPatchDiscardResult> =>
+      ipcRenderer.invoke(IPC.worktreeWslDiscard, path, wt, branch, taskId, confirmed),
     remove: (path: string, worktreePath: string, branch?: string): Promise<void> =>
       ipcRenderer.invoke(IPC.removeWorktree, path, worktreePath, branch),
   },

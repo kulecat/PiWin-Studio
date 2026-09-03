@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import { delimiter, join } from "node:path";
 import { dockerEgressInvocationArgs } from "./docker-egress";
 import { resolveDockerCredentialValues, type DockerCredentialValue } from "./docker-credential-policy";
-import { buildWslContainmentProbeArgs, readWslContainmentProbe } from "./wsl-containment";
+import { buildWslContainmentArgs, buildWslContainmentProbeArgs, readWslContainmentProbe } from "./wsl-containment";
 import type {
   AppConfigPayload,
   DockerSandboxProfile,
@@ -39,6 +39,8 @@ export interface PtyInvocation {
 const RUNNER_ENV = "PIWIN_EXECUTION_RUNNER";
 const WSL_DISTRIBUTION_ENV = "PIWIN_WSL_DISTRIBUTION";
 const WSL_MOUNT_ROOT_ENV = "PIWIN_WSL_MOUNT_ROOT";
+const WSL_CONTAINMENT_ENV = "PIWIN_WSL_CONTAINMENT";
+const WSL_PRIVATE_WORKSPACE_ENV = "PIWIN_WSL_PRIVATE_WORKSPACE";
 const DOCKER_IMAGE_ENV = "PIWIN_DOCKER_IMAGE";
 const DOCKER_WORKSPACE_ACCESS_ENV = "PIWIN_DOCKER_WORKSPACE_ACCESS";
 const DOCKER_WORKSPACE_VOLUME_ENV = "PIWIN_DOCKER_WORKSPACE_VOLUME";
@@ -112,7 +114,7 @@ function wslSettings(environment: NodeJS.ProcessEnv = process.env): WslSettings 
 /** Apply desktop preferences to a new agent-process environment. */
 export function applyExecutionConfig(
   environment: NodeJS.ProcessEnv,
-  config: Pick<AppConfigPayload, "executionRunner" | "wslDistribution" | "wslMountRoot">,
+  config: Pick<AppConfigPayload, "executionRunner" | "wslDistribution" | "wslMountRoot" | "wslContainmentEnabled">,
 ): NodeJS.ProcessEnv {
   const next = { ...environment };
   if (config.executionRunner) next[RUNNER_ENV] = config.executionRunner;
@@ -125,6 +127,10 @@ export function applyExecutionConfig(
     const mountRoot = config.wslMountRoot?.trim();
     if (mountRoot) next[WSL_MOUNT_ROOT_ENV] = mountRoot;
     else delete next[WSL_MOUNT_ROOT_ENV];
+  }
+  if (config.wslContainmentEnabled !== undefined) {
+    if (config.wslContainmentEnabled) next[WSL_CONTAINMENT_ENV] = "1";
+    else delete next[WSL_CONTAINMENT_ENV];
   }
   return next;
 }
@@ -181,8 +187,8 @@ export function isDockerReadOnlyProfileActive(): boolean {
 }
 
 /** True only for the write-capable profile that must use a private task volume. */
-export function isDockerPrivateCopyModeActive(): boolean {
-  return process.platform === "win32" && configuredRunner() === "docker" && getDockerSandboxProfile().workspaceAccess === "readwrite";
+export function isDockerPrivateCopyModeActive(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return process.platform === "win32" && configuredRunner(environment) === "docker" && getDockerSandboxProfile().workspaceAccess === "readwrite";
 }
 
 /** Pi file tools must not write the host whenever Docker is the selected runner. */
@@ -230,6 +236,40 @@ function requireReadonlyCredentialSnapshotVolume(): string {
 
 function wslArgs(settings: WslSettings): string[] {
   return settings.distribution ? ["--distribution", settings.distribution] : [];
+}
+
+/** The preference is inert unless WSL2 is selected explicitly for a new chat. */
+export function isWslContainmentModeConfigured(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    process.platform === "win32" &&
+    configuredRunner(environment) === "wsl" &&
+    environment[WSL_CONTAINMENT_ENV]?.trim() === "1"
+  );
+}
+
+function privateWslWorkspace(environment: NodeJS.ProcessEnv, settings: WslSettings): string | undefined {
+  const workspace = environment[WSL_PRIVATE_WORKSPACE_ENV]?.trim().replaceAll("\\", "/");
+  if (!workspace) return undefined;
+  if (!workspace.startsWith("/") || workspace.length > 4_096 || workspace.split("/").some((part) => part === "..")) {
+    throw new Error("PIWIN_WSL_PRIVATE_WORKSPACE must be an absolute native Linux path without ..");
+  }
+  const normalized = workspace === "/" ? "/" : workspace.replace(/\/+$/, "");
+  if (normalized === settings.mountRoot || normalized.startsWith(`${settings.mountRoot}/`)) {
+    throw new Error("PIWIN_WSL_PRIVATE_WORKSPACE must not point at a mounted Windows drive");
+  }
+  return normalized;
+}
+
+/** True only inside a chat that has been given a native PiWin task copy. */
+export function isWslPrivateWorkspaceRoutingActive(environment: NodeJS.ProcessEnv = process.env): boolean {
+  if (!isWslContainmentModeConfigured(environment)) return false;
+  const settings = wslSettings(environment);
+  if (settings.error) return false;
+  try {
+    return Boolean(privateWslWorkspace(environment, settings));
+  } catch {
+    return false;
+  }
 }
 
 function probeWsl(environment: NodeJS.ProcessEnv = process.env): WslProbe {
@@ -407,6 +447,29 @@ function powerShellInvocation(command: string, environment: NodeJS.ProcessEnv = 
 function wslInvocation(command: string, cwd: string, environment: NodeJS.ProcessEnv = process.env): PtyInvocation {
   const settings = wslSettings(environment);
   if (settings.error) throw new Error(settings.error);
+  if (isWslContainmentModeConfigured(environment)) {
+    const workspace = privateWslWorkspace(environment, settings);
+    if (!workspace) {
+      throw new Error("WSL containment requires a PiWin private task workspace. Open a fresh guarded task worktree, then start the agent there.");
+    }
+    return {
+      file: "wsl.exe",
+      args: [
+        ...wslArgs(settings),
+        "--exec",
+        "bwrap",
+        ...buildWslContainmentArgs(
+          {
+            workspace,
+            workspaceAccess: "readwrite",
+            windowsMountRoot: settings.mountRoot,
+          },
+          command,
+        ),
+      ],
+      runner: "wsl",
+    };
+  }
   return {
     file: "wsl.exe",
     args: [...wslArgs(settings), "--cd", windowsPathToWsl(cwd, settings.mountRoot), "--", "bash", "-lc", command],

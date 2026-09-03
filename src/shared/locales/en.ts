@@ -143,7 +143,9 @@ export const en: Messages = {
     wslMapping: "Current WSL route: {distro}; Windows paths map as {root}/drive/….",
     powerShellApproval: "PowerShell runs directly in the Windows user environment. Every agent bash call requires human approval and is written to the execution audit.",
     wslContainmentTitle: "WSL2 Bubblewrap containment spike",
-    wslContainmentScope: "Diagnostic only: sessions are not routed through this profile until every built-in file tool shares a private WSL task copy and a reviewed patch import.",
+    wslContainmentScope: "Experimental profile: when enabled, a new guarded task routes bash/read/write/edit/grep/find/ls through one native WSL private copy, with network disabled and a reviewed patch import.",
+    wslContainmentEnable: "Enable Bubblewrap containment for new guarded WSL2 tasks",
+    wslContainmentEnableHint: "Requires explicit WSL2 selection, the passing probe above, and a new PiWin task worktree. Unrouted extensions/MCP are disabled by default; changes return only by patch import.",
     dockerSandboxTitle: "Restricted Docker profile",
     dockerSandboxSummary: "Workspace: {workspace} · Network: {network} · {memory} memory · {cpus} CPU · {pids} PIDs",
     dockerWorkspaceReadonly: "Read-only (write / edit disabled)",
@@ -712,6 +714,15 @@ export const en: Messages = {
     discardDocker: "Discard Docker copy",
     dockerDiscardConfirm: "Discard Docker-only changes in {n} files? This cannot be undone.",
     dockerDiscardFailed: "Could not discard Docker copy",
+    wslCopy: "WSL Bubblewrap private task copy — not yet in the host worktree.",
+    wslChanges: "{n} files changed only inside the isolated WSL copy.",
+    wslNoChanges: "No private WSL code changes.",
+    importWsl: "Import patch",
+    wslImportConfirm: "Import the isolated WSL patch for {n} files into this task worktree? The copy will then be closed before review.",
+    wslImportFailed: "Could not import WSL patch",
+    discardWsl: "Discard WSL copy",
+    wslDiscardConfirm: "Discard isolated WSL changes in {n} files? This cannot be undone.",
+    wslDiscardFailed: "Could not discard WSL copy",
   },
   trajectory: {
     tools: "{n} tool calls",
@@ -1128,6 +1139,10 @@ export const en: Messages = {
       "Docker host-side tool: this call runs outside the private workspace. Approve this individual call?",
     dockerHostToolActivationBlocked:
       "Docker mode prevents the agent from enabling host-side tool {name}. Review and enable it manually in Tools only if you trust it.",
+    privateHostToolApproval:
+      "Outside-private-workspace tool: this call does not run through PiWin's private workspace. Approve this individual call?",
+    privateHostToolActivationBlocked:
+      "Isolation mode prevents the agent from enabling outside-workspace tool {name}. Review and enable it manually in Tools only if you trust it.",
     systemPrompt: "System prompt",
     append: "Appended snippet",
     memory: "Memory",

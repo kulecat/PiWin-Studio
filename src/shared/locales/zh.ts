@@ -141,7 +141,9 @@ export const zh = {
     wslMapping: "当前 WSL 路由：{distro}；Windows 路径按 {root}/盘符/… 映射。",
     powerShellApproval: "PowerShell 直接运行在 Windows 用户环境。每次 agent bash 调用都需要人工确认，并写入执行审计。",
     wslContainmentTitle: "WSL2 Bubblewrap 隔离验证",
-    wslContainmentScope: "仅为诊断：在全部内置文件工具共享 WSL 私有任务副本、并完成审核式补丁导入前，会话不会路由到此 Profile。",
+    wslContainmentScope: "实验 Profile：启用后，新建的受控任务会把 bash/read/write/edit/grep/find/ls 路由到同一个原生 WSL 私有副本；默认断网，并需要审核式补丁导入。",
+    wslContainmentEnable: "为新的受控 WSL2 任务启用 Bubblewrap 隔离",
+    wslContainmentEnableHint: "必须选择 WSL2、通过上方验证，并从新的 PiWin 任务 worktree 打开会话。未路由的扩展/MCP 默认禁用；变更只能经补丁导入。",
     dockerSandboxTitle: "Docker 受限执行 Profile",
     dockerSandboxSummary: "工作区：{workspace} · 网络：{network} · 内存 {memory} · CPU {cpus} · 进程 {pids}",
     dockerWorkspaceReadonly: "只读（write / edit 已禁用）",
@@ -707,6 +709,15 @@ export const zh = {
     discardDocker: "丢弃 Docker 副本",
     dockerDiscardConfirm: "确认丢弃 Docker 内 {n} 个文件的改动吗？此操作不可恢复。",
     dockerDiscardFailed: "丢弃 Docker 副本失败",
+    wslCopy: "WSL Bubblewrap 私有任务副本——尚未进入宿主 worktree。",
+    wslChanges: "仅 WSL 隔离副本内有 {n} 个文件改动。",
+    wslNoChanges: "WSL 私有副本没有代码改动。",
+    importWsl: "导入补丁",
+    wslImportConfirm: "确认将 WSL 隔离副本内 {n} 个文件的补丁导入此任务 worktree 吗？副本随后会关闭，才能进入审核。",
+    wslImportFailed: "导入 WSL 补丁失败",
+    discardWsl: "丢弃 WSL 副本",
+    wslDiscardConfirm: "确认丢弃 WSL 隔离副本内 {n} 个文件的改动吗？此操作不可恢复。",
+    wslDiscardFailed: "丢弃 WSL 副本失败",
   },
   trajectory: {
     tools: "{n} 次工具",
@@ -1121,6 +1132,10 @@ export const zh = {
       "Docker 宿主侧工具：本次调用会在私有工作区之外执行。是否批准这一条调用？",
     dockerHostToolActivationBlocked:
       "Docker 模式禁止 agent 启用宿主侧工具 {name}。仅当你已审查并信任它时，才在「工具」中手动启用。",
+    privateHostToolApproval:
+      "隔离工作区外工具：本次调用不会经过 PiWin 的私有工作区。是否批准这一条调用？",
+    privateHostToolActivationBlocked:
+      "隔离模式禁止 agent 启用工作区外工具 {name}。仅当你已审查并信任它时，才在「工具」中手动启用。",
     systemPrompt: "系统提示",
     append: "追加片段",
     memory: "长期记忆",

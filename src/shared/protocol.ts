@@ -366,6 +366,8 @@ export interface AppConfigPayload {
   wslDistribution?: string | null;
   /** Optional WSL automount root, normally `/mnt`. Null clears this setting in a patch. */
   wslMountRoot?: string | null;
+  /** Explicit opt-in for the experimental Bubblewrap + native WSL task-copy profile. */
+  wslContainmentEnabled?: boolean | null;
 }
 
 export type VercelTestResult =
@@ -1200,6 +1202,9 @@ export const IPC = {
   worktreeDockerPatch: "worktree:dockerPatch",
   worktreeDockerImport: "worktree:dockerImport",
   worktreeDockerDiscard: "worktree:dockerDiscard",
+  worktreeWslPatch: "worktree:wslPatch",
+  worktreeWslImport: "worktree:wslImport",
+  worktreeWslDiscard: "worktree:wslDiscard",
   authStartLogin: "auth:startLogin",
   authPromptResponse: "auth:promptResponse",
   authCancelLogin: "auth:cancelLogin",
