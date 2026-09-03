@@ -358,6 +358,9 @@ export const zh = {
     auditMerged: "已合并",
     auditRestored: "已恢复 checkpoint",
     auditClaims: "已更新路径声明",
+    auditWslCopyCreated: "已创建 WSL 私有副本",
+    auditWslPatchImported: "已导入 WSL 补丁",
+    auditWslCopyDiscarded: "已丢弃 WSL 私有副本",
     auditDiscarded: "已丢弃任务",
   },
   composer: {

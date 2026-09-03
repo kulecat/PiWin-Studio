@@ -62,19 +62,24 @@ network route. Its only intended project mount is `/workspace`, bound from a
 **native WSL private task copy**; the builder rejects a task source below the
 Windows mount root, so a writable profile cannot bind the Windows worktree.
 
-The probe itself creates no task copy and does not run Agent commands. A green
-result means only that this host can form the tested namespace boundary. It
-does not mean PiWin has a complete WSL sandbox. Before it can become selectable
-we still need to:
+PiWin now has the backend lifecycle needed for that future task copy: it seeds
+`$HOME/.piwin/task-sandboxes/<task-id>` from a clean, guarded Git worktree,
+filters Git metadata/common credential files/build artifacts, records the copy
+locally, previews a binary Git patch, validates it against the host task, and
+requires explicit confirmation before import or discard. Copy paths are
+verified against the task UUID before any WSL-side deletion. Lifecycle events
+appear in the local task audit ledger.
 
-1. seed and retire a credential-filtered native WSL task copy from a guarded
-   Git worktree;
-2. route `bash`, `read`, `write`, `edit`, `grep`, `find`, and `ls` through that
-   same copy, with path and symlink containment;
-3. extract, validate, and human-confirm a patch import back into the guarded
-   task worktree; and
-4. audit copy lifecycle/recovery and separately design any opt-in network
-   allowlist path.
+This is deliberately **not connected to Agent routing or the desktop control
+yet**. A green probe and the backend hand-off do not mean PiWin has a complete
+WSL sandbox. Before the profile can become selectable we still need to:
+
+1. route `bash`, `read`, `write`, `edit`, `grep`, `find`, and `ls` through that
+   same native copy, with path and symlink containment;
+2. expose the reviewed WSL patch hand-off in the task UI and crash-recovery
+   flow; and
+3. separately design any opt-in WSL network allowlist and third-party
+   extension/MCP boundary.
 
 This scoped approach avoids changing the user's global `/etc/wsl.conf` drive
 mount behavior, which is distribution-wide rather than task-scoped.

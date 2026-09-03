@@ -207,6 +207,9 @@ function taskEventLabel(kind: WorktreeTaskDashboard["events"][number]["kind"], t
     case "merge_completed": return t("mission.auditMerged");
     case "checkpoint_restored": return t("mission.auditRestored");
     case "path_claims_updated": return t("mission.auditClaims");
+    case "wsl_copy_created": return t("mission.auditWslCopyCreated");
+    case "wsl_patch_imported": return t("mission.auditWslPatchImported");
+    case "wsl_copy_discarded": return t("mission.auditWslCopyDiscarded");
     case "task_discarded": return t("mission.auditDiscarded");
   }
 }

@@ -17,6 +17,10 @@ import type {
   DockerTaskPatchImportResult,
   DockerTaskPatchPreview,
   DockerTaskWorkspaceState,
+  WslTaskPatchDiscardResult,
+  WslTaskPatchImportResult,
+  WslTaskPatchPreview,
+  WslTaskWorkspaceState,
   WorktreeTaskAuditEvent,
   WorktreeTaskAuditEventKind,
   WorktreeCheckpointKind,
@@ -31,19 +35,36 @@ import type {
   WorktreeTaskRef,
   WorktreeTaskState,
 } from "@shared/protocol";
-import { getDockerSandboxProfile } from "../host/windows-execution";
-import { dockerFilteredWorkspaceCopyCommand } from "../host/docker-credential-policy";
+import { getDockerSandboxProfile, windowsPathToWsl } from "../host/windows-execution";
+import {
+  dockerFilteredWorkspaceCopyCommand,
+  DOCKER_NON_SOURCE_FILE_GLOBS,
+  DOCKER_SECRET_FILE_GLOBS,
+} from "../host/docker-credential-policy";
 
 const exec = promisify(execFile);
 const TASKS_FILE = "piwin-tasks.json";
-const TASKS_SCHEMA_VERSION = 3;
+const TASKS_SCHEMA_VERSION = 4;
 const TASK_AUDIT_EVENT_LIMIT = 600;
 const DOCKER_PRIVATE_VOLUME_PREFIX = "piwin-task-";
 const DOCKER_PRIVATE_BASE_REF = "refs/piwin/private-base";
+const WSL_PRIVATE_BASE_REF = "refs/piwin/wsl-private-base";
 
 interface DockerTaskWorkspaceRecord {
   volume: string;
   state: DockerTaskWorkspaceState;
+  sourceCommit: string;
+  createdAt: string;
+  importedAt?: string;
+  discardedAt?: string;
+}
+
+interface WslTaskWorkspaceRecord {
+  /** Native-Linux path in the selected WSL distribution, never a DrvFs path. */
+  path: string;
+  distribution?: string;
+  mountRoot: string;
+  state: WslTaskWorkspaceState;
   sourceCommit: string;
   createdAt: string;
   importedAt?: string;
@@ -77,6 +98,7 @@ interface PersistedTask {
   /** User-declared project-relative paths used for conservative conflict warnings. */
   pathClaims?: string[];
   dockerWorkspace?: DockerTaskWorkspaceRecord;
+  wslWorkspace?: WslTaskWorkspaceRecord;
 }
 
 interface MergeQueueEntry {
@@ -126,6 +148,26 @@ async function docker(args: string[], options: { timeout?: number; maxBuffer?: n
   });
   // A unified diff must retain its final newline. Do not normalize Docker
   // command output here; callers that need a trimmed scalar can do so locally.
+  return stdout;
+}
+
+/**
+ * Run one non-interactive command in WSL without shell-concatenating user
+ * input. Unlike `git()`, callers receive raw stdout so NUL-separated names
+ * and unified-diff final newlines remain intact.
+ */
+async function wsl(
+  distribution: string | undefined,
+  args: string[],
+  options: { timeout?: number; maxBuffer?: number } = {},
+): Promise<string> {
+  if (process.platform !== "win32") throw new Error("WSL 私有副本仅支持 Windows 主机");
+  const distributionArgs = distribution ? ["--distribution", distribution] : [];
+  const { stdout } = await exec("wsl.exe", [...distributionArgs, "--exec", ...args], {
+    timeout: options.timeout ?? 180_000,
+    maxBuffer: options.maxBuffer ?? 32 * 1024 * 1024,
+    windowsHide: true,
+  });
   return stdout;
 }
 
@@ -196,9 +238,13 @@ async function readTaskStore(root: string): Promise<TaskStore> {
   try {
     const raw = await readFile(await taskStorePath(root), "utf8");
     const parsed = JSON.parse(raw) as Partial<TaskStore>;
-    // Versions 1 and 2 predate durable task events/path claims. Upgrade in
+    // Older versions predate durable events, path claims, or native WSL task
+    // copies. Upgrade in
     // memory and write the new shape only after the next normal mutation.
-    if ((parsed.version !== 1 && parsed.version !== 2 && parsed.version !== TASKS_SCHEMA_VERSION) || !Array.isArray(parsed.tasks)) {
+    if (
+      (parsed.version !== 1 && parsed.version !== 2 && parsed.version !== 3 && parsed.version !== TASKS_SCHEMA_VERSION) ||
+      !Array.isArray(parsed.tasks)
+    ) {
       throw new Error("unsupported task metadata");
     }
     return {
@@ -395,6 +441,27 @@ function dockerVolumeName(task: PersistedTask): string {
 
 function dockerTaskMount(volume: string): string {
   return ["type=volume", `src=${volume}`, "dst=/workspace"].join(",");
+}
+
+function validWslDistribution(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) return undefined;
+  if (normalized.length > 120 || /[\0\r\n]/.test(normalized)) {
+    throw new Error("WSL 发行版名称无效");
+  }
+  return normalized;
+}
+
+function validWslMountRoot(value: string | undefined): string {
+  const withForwardSlashes = value?.trim().replaceAll("\\", "/");
+  const normalized = withForwardSlashes === "/" ? "/" : withForwardSlashes?.replace(/\/+$/, "");
+  if (!normalized || !normalized.startsWith("/") || normalized.length > 120) {
+    throw new Error("WSL 挂载根目录必须是绝对 Linux 路径");
+  }
+  if (normalized.split("/").some((segment) => segment === "..")) {
+    throw new Error("WSL 挂载根目录不能包含 ..");
+  }
+  return normalized;
 }
 
 function dockerTaskIsolationArgs(): string[] {
@@ -644,14 +711,14 @@ export async function previewDockerTaskPatch(
 
 async function assertHostTaskReadyForPatch(task: PersistedTask): Promise<void> {
   if (task.state !== "active") {
-    throw new Error("Docker 补丁只能导入尚未审核的活动任务");
+    throw new Error("私有副本补丁只能导入尚未审核的活动任务");
   }
   const [dirty, head] = await Promise.all([
     git(task.worktreePath, "status", "--porcelain", "--untracked-files=all"),
     git(task.worktreePath, "rev-parse", "HEAD"),
   ]);
   if (dirty || head !== task.baseCommit) {
-    throw new Error("任务 worktree 已有宿主机改动或提交，拒绝混合导入 Docker 补丁。请先审核、提交或丢弃其中一侧的改动。");
+    throw new Error("任务 worktree 已有宿主机改动或提交，拒绝混合导入私有副本补丁。请先审核、提交或丢弃其中一侧的改动。");
   }
 }
 
@@ -795,6 +862,379 @@ export async function discardDockerTaskPatch(
       changedFiles: patch.changedFiles,
       patchBytes,
       error: `Docker 私有副本未丢弃：${compactCommandError(error)}`,
+    };
+  }
+}
+
+/** Configuration resolved from the selected WSL2 runner before a chat starts. */
+export interface WslTaskWorkspaceOptions {
+  distribution?: string;
+  mountRoot?: string;
+}
+
+interface WslTaskWorkspaceForChat {
+  /** Native Linux path under $HOME/.piwin/task-sandboxes, never a DrvFs path. */
+  path: string;
+  distribution?: string;
+  mountRoot: string;
+}
+
+interface ResolvedWslTaskWorkspaceOptions {
+  distribution?: string;
+  mountRoot: string;
+}
+
+interface WslPatchData {
+  patch: string;
+  changedFiles: string[];
+}
+
+function wslWorkspaceOptions(options: WslTaskWorkspaceOptions = {}): ResolvedWslTaskWorkspaceOptions {
+  return {
+    distribution: validWslDistribution(options.distribution ?? process.env.PIWIN_WSL_DISTRIBUTION),
+    mountRoot: validWslMountRoot(options.mountRoot ?? process.env.PIWIN_WSL_MOUNT_ROOT ?? "/mnt"),
+  };
+}
+
+function isTaskId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function wslPrivateWorkspaceScript(
+  script: string,
+  workspace: string,
+  taskId: string,
+): string[] {
+  if (!isTaskId(taskId)) throw new Error("WSL 私有副本任务标识无效");
+  // `sh -lc` receives the script as one opaque argument. The workspace path
+  // remains a positional parameter throughout; it is never interpolated into
+  // shell source or a destructive command.
+  return ["sh", "-lc", script, "piwin", workspace, taskId];
+}
+
+function wslFilteredWorkspaceCopyCommand(): string {
+  const quote = (value: string): string => `'${value.replaceAll("'", `"'"`)}'`;
+  const excludes = [".git", ...DOCKER_SECRET_FILE_GLOBS, ...DOCKER_NON_SOURCE_FILE_GLOBS]
+    .map((pattern) => `--exclude=${quote(pattern)}`)
+    .join(" ");
+  return `tar -C "$source" ${excludes} -cf - . | tar -C "$staging" -xf -`;
+}
+
+function wslWorkspaceGuardScript(command: string): string {
+  return [
+    "set -eu",
+    'workspace="$1"',
+    'task_id="$2"',
+    'base="$HOME/.piwin/task-sandboxes"',
+    'expected="$base/$task_id"',
+    'case "$workspace" in "$base"/*) ;; *) echo "PiWin refused an unsafe WSL workspace path" >&2; exit 64;; esac',
+    'test "$workspace" = "$expected" || { echo "PiWin WSL workspace does not match the task" >&2; exit 64; }',
+    command,
+  ].join("\n");
+}
+
+async function wslWorkspaceExists(
+  workspace: WslTaskWorkspaceRecord,
+  taskId: string,
+): Promise<boolean> {
+  const script = wslWorkspaceGuardScript('test -d "$workspace/.git"');
+  try {
+    await wsl(
+      workspace.distribution,
+      wslPrivateWorkspaceScript(script, workspace.path, taskId),
+      { timeout: 20_000, maxBuffer: 1024 * 1024 },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function initializeWslTaskWorkspace(
+  task: PersistedTask,
+  options: ResolvedWslTaskWorkspaceOptions,
+): Promise<string> {
+  if (!isTaskId(task.id)) throw new Error("WSL 私有副本任务标识无效");
+  const source = windowsPathToWsl(task.worktreePath, options.mountRoot);
+  const bootstrap = [
+    "set -eu",
+    "umask 077",
+    'source="$1"',
+    'task_id="$2"',
+    'base="$HOME/.piwin/task-sandboxes"',
+    'workspace="$base/$task_id"',
+    'test -d "$source" || { echo "PiWin task source is not visible inside WSL" >&2; exit 66; }',
+    'test ! -e "$workspace" || { echo "PiWin WSL task copy already exists" >&2; exit 17; }',
+    'mkdir -p "$base"',
+    'staging="$(mktemp -d "$base/.seed-$task_id.XXXXXX")"',
+    'cleanup() { rm -rf -- "$staging"; }',
+    "trap cleanup EXIT HUP INT TERM",
+    wslFilteredWorkspaceCopyCommand(),
+    'git -C "$staging" init -q',
+    'git -C "$staging" config user.name "PiWin Studio"',
+    'git -C "$staging" config user.email "piwin@desktop.local"',
+    'git -C "$staging" add -A',
+    'git -C "$staging" commit --allow-empty -qm "PiWin WSL private task base"',
+    `git -C "$staging" update-ref ${WSL_PRIVATE_BASE_REF} HEAD`,
+    'mv "$staging" "$workspace"',
+    'trap - EXIT HUP INT TERM',
+    'printf "%s\\n" "$workspace"',
+  ].join("\n");
+  const output = await wsl(
+    options.distribution,
+    ["sh", "-lc", bootstrap, "piwin", source, task.id],
+    { timeout: 300_000 },
+  );
+  const workspace = output.trim();
+  if (!workspace.startsWith("/") || workspace.includes("\0") || workspace.includes("\r") || workspace.includes("\n")) {
+    throw new Error("WSL 私有副本返回了无效路径");
+  }
+  return workspace;
+}
+
+async function assertWslTaskSource(task: PersistedTask): Promise<void> {
+  if (task.state !== "active") {
+    throw new Error("只有处于活动状态且尚未审核的 PiWin 任务可以启用 WSL 私有副本");
+  }
+  const [dirty, head] = await Promise.all([
+    git(task.worktreePath, "status", "--porcelain", "--untracked-files=all"),
+    git(task.worktreePath, "rev-parse", "HEAD"),
+  ]);
+  if (dirty || head !== task.baseCommit) {
+    throw new Error("WSL 私有副本只能从未修改的任务基线创建；请先审核或丢弃当前任务，再新建任务。");
+  }
+}
+
+/**
+ * Make a private native-Linux task snapshot. The Windows worktree is used
+ * only as controlled one-time copy input; subsequent edits and patch reads
+ * target $HOME/.piwin/task-sandboxes/<task-id> inside WSL.
+ */
+export async function prepareWslTaskWorkspaceForChat(
+  worktreePath: string,
+  requestedOptions: WslTaskWorkspaceOptions = {},
+): Promise<WslTaskWorkspaceForChat> {
+  const options = wslWorkspaceOptions(requestedOptions);
+  const root = await primaryRoot(worktreePath);
+  const branch = await git(worktreePath, "branch", "--show-current");
+  if (!branch) throw new Error("WSL 可写模式要求当前目录是已签出的 PiWin 任务分支");
+  const task = await findTask(root, worktreePath, branch);
+  if (!task) throw new Error("WSL 可写模式只允许 PiWin 受控任务 worktree；请先创建一个新任务。");
+  if (task.dockerWorkspace?.state === "ready") {
+    throw new Error("此任务仍有 Docker 私有副本。请先导入或丢弃该副本，再创建 WSL 私有副本。");
+  }
+
+  const existing = task.wslWorkspace;
+  if (existing?.state === "imported" || existing?.state === "discarded") {
+    throw new Error("此任务的 WSL 私有副本已经结束。请审核它的改动并新建下一个任务。");
+  }
+  if (existing?.state === "ready") {
+    if (existing.distribution === options.distribution && existing.mountRoot === options.mountRoot &&
+      (await wslWorkspaceExists(existing, task.id))) {
+      return { path: existing.path, distribution: existing.distribution, mountRoot: existing.mountRoot };
+    }
+    throw new Error("WSL 私有副本元数据存在，但原生副本不可用或与当前 WSL 设置不一致；请先显式丢弃该副本。");
+  }
+
+  await assertWslTaskSource(task);
+  let path: string;
+  try {
+    path = await initializeWslTaskWorkspace(task, options);
+  } catch (error) {
+    throw new Error(`无法创建 WSL 私有任务副本：${compactCommandError(error)}`);
+  }
+  const record: WslTaskWorkspaceRecord = {
+    path,
+    distribution: options.distribution,
+    mountRoot: options.mountRoot,
+    state: "ready",
+    sourceCommit: task.baseCommit,
+    createdAt: new Date().toISOString(),
+  };
+  await updateTask(root, task.id, { wslWorkspace: record });
+  await appendTaskAuditEvent(root, task.id, "wsl_copy_created", {
+    detail: `Native WSL private copy created in ${options.distribution ?? "default distribution"}`,
+  });
+  return { path, distribution: record.distribution, mountRoot: record.mountRoot };
+}
+
+async function readWslTaskPatch(task: PersistedTask): Promise<WslPatchData> {
+  const workspace = task.wslWorkspace;
+  if (!workspace || workspace.state !== "ready") return { patch: "", changedFiles: [] };
+  const prefix = wslWorkspaceGuardScript([
+    'test -d "$workspace/.git" || { echo "PiWin WSL private copy is missing" >&2; exit 66; }',
+    'git -C "$workspace" add -N -- .',
+  ].join("\n"));
+  try {
+    const names = await wsl(
+      workspace.distribution,
+      wslPrivateWorkspaceScript(`${prefix}\ngit -C "$workspace" diff --name-only -z ${WSL_PRIVATE_BASE_REF}`, workspace.path, task.id),
+      { timeout: 120_000 },
+    );
+    const patch = await wsl(
+      workspace.distribution,
+      wslPrivateWorkspaceScript(`${prefix}\ngit -C "$workspace" diff --binary --no-ext-diff --full-index ${WSL_PRIVATE_BASE_REF}`, workspace.path, task.id),
+      { timeout: 120_000 },
+    );
+    return { patch, changedFiles: names.split("\0").filter(Boolean) };
+  } catch (error) {
+    throw new Error(`无法读取 WSL 私有副本：${compactCommandError(error)}`);
+  }
+}
+
+async function removeWslTaskWorkspace(workspace: WslTaskWorkspaceRecord, taskId: string): Promise<void> {
+  const script = wslWorkspaceGuardScript('rm -rf -- "$workspace"');
+  await wsl(workspace.distribution, wslPrivateWorkspaceScript(script, workspace.path, taskId), {
+    timeout: 60_000,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
+async function requireWslTask(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+): Promise<{ root: string; task: PersistedTask }> {
+  const root = await primaryRoot(projectPath);
+  const task = await requireTask(root, worktreePath, branch, taskId);
+  return { root, task };
+}
+
+export async function previewWslTaskPatch(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+): Promise<WslTaskPatchPreview> {
+  const { task } = await requireWslTask(projectPath, worktreePath, branch, taskId);
+  const state = task.wslWorkspace?.state;
+  if (!state) return { state: "unavailable", changedFiles: [], patchBytes: 0 };
+  if (state !== "ready") return { state, changedFiles: [], patchBytes: 0 };
+  try {
+    const patch = await readWslTaskPatch(task);
+    return { state, changedFiles: patch.changedFiles, patchBytes: Buffer.byteLength(patch.patch, "utf8") };
+  } catch (error) {
+    return {
+      state,
+      changedFiles: [],
+      patchBytes: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function importWslTaskPatch(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  confirmed: boolean,
+): Promise<WslTaskPatchImportResult> {
+  const { root, task } = await requireWslTask(projectPath, worktreePath, branch, taskId);
+  if (task.wslWorkspace?.state !== "ready") {
+    return { imported: false, requiresConfirmation: false, changedFiles: [], patchBytes: 0, error: "没有可导入的 WSL 私有副本" };
+  }
+  let patch: WslPatchData = { patch: "", changedFiles: [] };
+  try {
+    patch = await readWslTaskPatch(task);
+    await assertHostTaskReadyForPatch(task);
+  } catch (error) {
+    return {
+      imported: false,
+      requiresConfirmation: false,
+      changedFiles: patch.changedFiles,
+      patchBytes: Buffer.byteLength(patch.patch, "utf8"),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const patchBytes = Buffer.byteLength(patch.patch, "utf8");
+  if (!patch.patch) {
+    return { imported: false, requiresConfirmation: false, changedFiles: [], patchBytes: 0, error: "WSL 私有副本没有可导入的代码改动" };
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), "piwin-wsl-patch-"));
+  const patchPath = join(tempDir, "task.patch");
+  try {
+    await writeFile(patchPath, patch.patch, "utf8");
+    await git(worktreePath, "apply", "--check", "--binary", "--whitespace=nowarn", patchPath);
+    if (!confirmed) return { imported: false, requiresConfirmation: true, changedFiles: patch.changedFiles, patchBytes };
+
+    await git(worktreePath, "apply", "--binary", "--whitespace=nowarn", patchPath);
+    try {
+      await removeWslTaskWorkspace(task.wslWorkspace, task.id);
+    } catch (error) {
+      await updateTask(root, task.id, {
+        wslWorkspace: { ...task.wslWorkspace, state: "imported", importedAt: new Date().toISOString() },
+      });
+      await appendTaskAuditEvent(root, task.id, "wsl_patch_imported", { files: patch.changedFiles });
+      return {
+        imported: true,
+        requiresConfirmation: false,
+        changedFiles: patch.changedFiles,
+        patchBytes,
+        error: `补丁已导入，但 WSL 私有副本清理失败：${compactCommandError(error)}`,
+      };
+    }
+    await updateTask(root, task.id, {
+      wslWorkspace: { ...task.wslWorkspace, state: "imported", importedAt: new Date().toISOString() },
+    });
+    await appendTaskAuditEvent(root, task.id, "wsl_patch_imported", { files: patch.changedFiles });
+    return { imported: true, requiresConfirmation: false, changedFiles: patch.changedFiles, patchBytes };
+  } catch (error) {
+    return {
+      imported: false,
+      requiresConfirmation: false,
+      changedFiles: patch.changedFiles,
+      patchBytes,
+      error: `WSL 补丁未导入：${compactCommandError(error)}`,
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+export async function discardWslTaskPatch(
+  projectPath: string,
+  worktreePath: string,
+  branch: string,
+  taskId: string,
+  confirmed: boolean,
+): Promise<WslTaskPatchDiscardResult> {
+  const { root, task } = await requireWslTask(projectPath, worktreePath, branch, taskId);
+  if (task.wslWorkspace?.state !== "ready") {
+    return { discarded: false, requiresConfirmation: false, changedFiles: [], patchBytes: 0, error: "没有可丢弃的 WSL 私有副本" };
+  }
+  let patch: WslPatchData = { patch: "", changedFiles: [] };
+  try {
+    patch = await readWslTaskPatch(task);
+  } catch (error) {
+    return {
+      discarded: false,
+      requiresConfirmation: false,
+      changedFiles: [],
+      patchBytes: 0,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const patchBytes = Buffer.byteLength(patch.patch, "utf8");
+  if (!confirmed && patch.changedFiles.length > 0) {
+    return { discarded: false, requiresConfirmation: true, changedFiles: patch.changedFiles, patchBytes };
+  }
+  try {
+    await removeWslTaskWorkspace(task.wslWorkspace, task.id);
+    await updateTask(root, task.id, {
+      wslWorkspace: { ...task.wslWorkspace, state: "discarded", discardedAt: new Date().toISOString() },
+    });
+    await appendTaskAuditEvent(root, task.id, "wsl_copy_discarded", { files: patch.changedFiles });
+    return { discarded: true, requiresConfirmation: false, changedFiles: patch.changedFiles, patchBytes };
+  } catch (error) {
+    return {
+      discarded: false,
+      requiresConfirmation: false,
+      changedFiles: patch.changedFiles,
+      patchBytes,
+      error: `WSL 私有副本未丢弃：${compactCommandError(error)}`,
     };
   }
 }
@@ -1170,8 +1610,8 @@ export async function prepareWorktreeReview(
   if (task.state === "merged" || task.state === "discarded") {
     throw new Error("已完成的任务不能再次进入审核");
   }
-  if (task.dockerWorkspace?.state === "ready") {
-    throw new Error("Docker 私有副本仍在保留改动。请先导入补丁或显式丢弃该副本，再准备审核。");
+  if (task.dockerWorkspace?.state === "ready" || task.wslWorkspace?.state === "ready") {
+    throw new Error("Docker 或 WSL 私有副本仍在保留改动。请先导入补丁或显式丢弃该副本，再准备审核。");
   }
   await commitTaskSnapshot(worktreePath, branch, task.id);
   const reviewCommit = await git(worktreePath, "rev-parse", "HEAD");
@@ -1217,8 +1657,8 @@ async function mergeWorktreeAtRoot(
   if (task.state !== "review_ready") {
     return { merged: false, mainBranch, mergedCommits: 0, error: "请先将任务标记为“准备审核”" };
   }
-  if (task.dockerWorkspace?.state === "ready") {
-    return { merged: false, mainBranch, mergedCommits: 0, error: "Docker 私有副本尚未导入或丢弃，拒绝合并。" };
+  if (task.dockerWorkspace?.state === "ready" || task.wslWorkspace?.state === "ready") {
+    return { merged: false, mainBranch, mergedCommits: 0, error: "Docker 或 WSL 私有副本尚未导入或丢弃，拒绝合并。" };
   }
   if (mainBranch !== task.targetBranch) {
     return { merged: false, mainBranch, mergedCommits: 0, error: `主工作区当前为 ${mainBranch}，任务目标为 ${task.targetBranch}` };
@@ -1340,7 +1780,9 @@ async function changedFilesBetween(root: string, older: string, newer: string): 
 
 async function taskReviewIsStable(task: PersistedTask): Promise<string | undefined> {
   if (!task.reviewCommit) return "任务缺少审核快照；请重新准备审核。";
-  if (task.dockerWorkspace?.state === "ready") return "Docker 私有副本尚未导入或丢弃。";
+  if (task.dockerWorkspace?.state === "ready" || task.wslWorkspace?.state === "ready") {
+    return "Docker 或 WSL 私有副本尚未导入或丢弃。";
+  }
   const [dirty, head] = await Promise.all([
     git(task.worktreePath, "status", "--porcelain", "--untracked-files=all"),
     git(task.worktreePath, "rev-parse", "HEAD"),
@@ -1609,8 +2051,8 @@ export async function restoreWorktreeCheckpoint(
     if (task.state === "merged" || task.state === "discarded") {
       return { restored: false, requiresConfirmation: false, checkpoint, error: "已完成的任务不能恢复到旧 checkpoint。" };
     }
-    if (task.dockerWorkspace?.state === "ready") {
-      return { restored: false, requiresConfirmation: false, checkpoint, error: "请先导入或丢弃 Docker 私有副本。" };
+    if (task.dockerWorkspace?.state === "ready" || task.wslWorkspace?.state === "ready") {
+      return { restored: false, requiresConfirmation: false, checkpoint, error: "请先导入或丢弃 Docker / WSL 私有副本。" };
     }
     try {
       await git(worktreePath, "cat-file", "-e", `${checkpoint.commit}^{commit}`);
@@ -1693,6 +2135,15 @@ async function discardTaskAtRoot(
       privateChanges = true;
     }
   }
+  if (task.wslWorkspace?.state === "ready") {
+    try {
+      privateChanges = (await readWslTaskPatch(task)).changedFiles.length > 0 || privateChanges;
+    } catch {
+      // An unavailable native copy is still a destructive state: retain the
+      // explicit-confirmation requirement rather than assuming it is empty.
+      privateChanges = true;
+    }
+  }
   const hasChanges = status.dirtyFiles > 0 || status.ahead > 0 || privateChanges;
   if (!confirmed && task.state !== "merged" && hasChanges) {
     return {
@@ -1713,6 +2164,15 @@ async function discardTaskAtRoot(
         discardedAt: now,
       };
     }
+    let wslWorkspace = task.wslWorkspace;
+    if (wslWorkspace && wslWorkspace.state !== "discarded") {
+      await removeWslTaskWorkspace(wslWorkspace, task.id);
+      wslWorkspace = {
+        ...wslWorkspace,
+        state: "discarded",
+        discardedAt: now,
+      };
+    }
     await git(root, "worktree", "remove", "--force", task.worktreePath);
     await git(root, "branch", "-D", task.branch);
     const store = await readTaskStore(root);
@@ -1723,6 +2183,7 @@ async function discardTaskAtRoot(
       state: "discarded",
       discardedAt: now,
       dockerWorkspace,
+      wslWorkspace,
       queuedAt: undefined,
       queueBlocked: undefined,
     };

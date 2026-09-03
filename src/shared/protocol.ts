@@ -768,6 +768,9 @@ export type WorktreeTaskAuditEventKind =
   | "merge_completed"
   | "checkpoint_restored"
   | "path_claims_updated"
+  | "wsl_copy_created"
+  | "wsl_patch_imported"
+  | "wsl_copy_discarded"
   | "task_discarded";
 
 export interface WorktreeTaskAuditEvent {
@@ -892,6 +895,9 @@ export interface WorktreeDiscardResult {
 /** State of the disposable Docker copy associated with one guarded task. */
 export type DockerTaskWorkspaceState = "ready" | "imported" | "discarded";
 
+/** State of the native-WSL private copy associated with one guarded task. */
+export type WslTaskWorkspaceState = "ready" | "imported" | "discarded";
+
 /** A non-mutating summary of changes held only inside a Docker task copy. */
 export interface DockerTaskPatchPreview {
   state: DockerTaskWorkspaceState | "unavailable";
@@ -911,6 +917,32 @@ export interface DockerTaskPatchImportResult {
 
 /** Result of discarding the unimported private Docker task copy. */
 export interface DockerTaskPatchDiscardResult {
+  discarded: boolean;
+  requiresConfirmation: boolean;
+  changedFiles: string[];
+  patchBytes: number;
+  error?: string;
+}
+
+/** A non-mutating summary of changes held only in a native WSL task copy. */
+export interface WslTaskPatchPreview {
+  state: WslTaskWorkspaceState | "unavailable";
+  changedFiles: string[];
+  patchBytes: number;
+  error?: string;
+}
+
+/** Result of the explicit, human-confirmed WSL private-copy patch import. */
+export interface WslTaskPatchImportResult {
+  imported: boolean;
+  requiresConfirmation: boolean;
+  changedFiles: string[];
+  patchBytes: number;
+  error?: string;
+}
+
+/** Result of discarding the unimported WSL private task copy. */
+export interface WslTaskPatchDiscardResult {
   discarded: boolean;
   requiresConfirmation: boolean;
   changedFiles: string[];

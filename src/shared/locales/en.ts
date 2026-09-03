@@ -361,6 +361,9 @@ export const en: Messages = {
     auditMerged: "Merged",
     auditRestored: "Checkpoint restored",
     auditClaims: "Path claims updated",
+    auditWslCopyCreated: "WSL private copy created",
+    auditWslPatchImported: "WSL patch imported",
+    auditWslCopyDiscarded: "WSL private copy discarded",
     auditDiscarded: "Task discarded",
   },
   composer: {

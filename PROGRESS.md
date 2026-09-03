@@ -342,6 +342,24 @@ and recoverable worktree-based agent tasks.
   A private-copy lifecycle, full first-party file-tool routing, reviewed patch
   import, recovery, and an optional WSL network policy are prerequisites.
 
+### 2026-09-03 — Native WSL private-copy hand-off backend
+
+- Added a schema-v4 task record for a WSL private workspace. The copy is made
+  only from a clean, active PiWin worktree and lives at
+  `$HOME/.piwin/task-sandboxes/<task-id>` in the selected distribution, never
+  on a mounted Windows drive.
+- The one-time seed filters `.git`, common credential files/directories, and
+  reinstallable/build artifacts. A private Git baseline supports binary diff
+  preview, `git apply --check`, explicit confirmation before host import, and
+  explicit confirmation before discarding changed work.
+- WSL-side removal verifies that the persisted path exactly matches the active
+  task UUID under PiWin's native base directory. Task review, merge, recovery,
+  and deletion refuse or account for an outstanding WSL private copy. Mission
+  Control now records create/import/discard lifecycle events.
+- This is a backend hand-off, not a selectable WSL Agent sandbox: no Agent
+  `bash` or file tool has been rerouted yet. That prevents a misleading state
+  where commands would be isolated but file edits still target the host.
+
 ### 2026-09-01 — Source-control baseline
 
 - Initialized the local `main` branch and recorded the Bivor-derived PiWin
@@ -395,6 +413,10 @@ and recoverable worktree-based agent tasks.
 - Verified that the same profile can bind an existing native WSL directory at
   `/workspace` after the host `/home` has been hidden, while `/mnt/c` remains
   inaccessible (`WSL_PRIVATE_SOURCE_BIND_OK`).
+- Ran a disposable native-WSL + Git smoke test against Ubuntu: credential
+  filtering, native copy creation, untracked-file patch preview, confirmation
+  gate, host `git apply` validation/import, WSL copy retirement, and task
+  cleanup all passed (`WSL_PRIVATE_COPY_SMOKE_OK`).
 - Verified `node:22-bookworm` provides Git and the non-root `node` user needed
   for a private workspace.
 - Ran a disposable Docker + Git smoke test: private volume creation, changed
@@ -428,17 +450,17 @@ and recoverable worktree-based agent tasks.
 - PowerShell requires agent-call approval but is still a convenience runner,
   not a security boundary. WSL2 routing also is not containment: it maps the
   host project into Linux. Docker covers Pi's built-in command and file tools;
-  the Bubblewrap probe is not yet an Agent sandbox. WSL private-copy lifecycle,
-  first-party file-tool routing, WSL network policy, and third-party
-  extension/MCP routing remain pending.
+  the Bubblewrap probe and native-copy hand-off are not yet an Agent sandbox.
+  Unified WSL first-party routing, its desktop hand-off UI, WSL network policy,
+  and third-party extension/MCP routing remain pending.
 
 ## Next work
 
 1. Add checkpoint references and a read-only audit viewer, including Docker
    private-patch lifecycle events and task-ledger links.
-2. Build the WSL-native private task-copy lifecycle, then route every
-   first-party command/file tool through it and require reviewed patch import
-   before exposing Bubblewrap as an Agent sandbox.
+2. Route every WSL `bash` and first-party file tool through the verified native
+   task copy, then expose its reviewed patch import in the task UI before
+   exposing Bubblewrap as an Agent sandbox.
 3. Extend the non-Docker policy layer with destination-specific network rules
    and controlled routing for third-party extensions/MCP tools.
 4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
