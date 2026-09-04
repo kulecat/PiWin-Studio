@@ -52,6 +52,12 @@ import {
 import { abortAllSubagents, buildSubagentTool, totalSubagentCost } from "./subagents";
 import { buildMemoryTool, memorySystemPrompt } from "./memory";
 import { applyPresetToolPolicy, filterCustomTools } from "./preset";
+import {
+  applyExternalToolAdmission,
+  canAgentActivateExternalTool,
+  denyExternalResourceLoading,
+  getExternalToolsMode,
+} from "./external-tools-policy";
 import { getRuntimePreset, localizePreset, presetKind, type RuntimePresetDef } from "@shared/runtime-presets";
 import { t as translate } from "@shared/locales";
 import type { Locale } from "@shared/i18n";
@@ -245,6 +251,20 @@ function applyPrivateWorkspaceHostToolBoundary(s: AgentSession): string[] {
   s.setActiveToolsByName(s.getActiveToolNames().filter((name) => !hostToolSet.has(name)));
   setMandatoryToolApprovalGate(hostTools, ht("host.privateHostToolApproval"));
   return hostTools;
+}
+
+/**
+ * Outside a private workspace, a reviewed third-party package can be used in
+ * explicit `ask` mode. Its tools are initially hidden and every call remains
+ * human-approved. In default `deny` mode the resource loader never imports it.
+ */
+function applyExternalToolBoundary(s: AgentSession): string[] {
+  if (dockerHostToolsBoundaryActive() || wslHostToolsBoundaryActive()) return [];
+  const externalTools = applyExternalToolAdmission(s);
+  if (externalTools.length > 0) {
+    setMandatoryToolApprovalGate(externalTools, ht("host.externalToolApproval"));
+  }
+  return externalTools;
 }
 
 /**
@@ -648,7 +668,8 @@ async function init(msg: HostInit): Promise<void> {
           // In an isolated private-workspace profile do not even load resource extensions.
           // Extension modules may execute at load time, which is earlier than
           // the per-tool approval gate. Inline PiWin guardrails still load.
-          noExtensions: !allowExternalDockerTools() || !allowExternalWslTools(),
+          noExtensions:
+            !allowExternalDockerTools() || !allowExternalWslTools() || denyExternalResourceLoading(),
           skillsOverride: (base) => {
             fullSkills = base.skills;
             return {
@@ -731,8 +752,14 @@ async function init(msg: HostInit): Promise<void> {
             buildBrowserTool(),
             ...(isDockerHostWriteBlocked() ? [buildDockerCredentialExecTool(() => cwd)] : []),
             ...buildDisclosureTools(() => session, {
-              canActivate: (name) => canAgentActivateDockerTool(name) && canAgentActivateWslTool(name),
-              blockedMessage: (name) => ht("host.privateHostToolActivationBlocked", { name }),
+              canActivate: (name) =>
+                canAgentActivateDockerTool(name) &&
+                canAgentActivateWslTool(name) &&
+                canAgentActivateExternalTool(name),
+              blockedMessage: (name) =>
+                !canAgentActivateExternalTool(name)
+                  ? ht("host.externalToolActivationBlocked", { name })
+                  : ht("host.privateHostToolActivationBlocked", { name }),
             }),
             buildCodeRunTool(),
             buildSelfTuneTool(),
@@ -790,6 +817,7 @@ async function init(msg: HostInit): Promise<void> {
       });
     }
     const privateWorkspaceHostTools = applyPrivateWorkspaceHostToolBoundary(session);
+    const externalTools = privateWorkspaceHostTools.length === 0 ? applyExternalToolBoundary(session) : [];
     trajectory = createTrajectoryRecorder({
       capture: captureAssembly,
       emit: (steps) => send({ type: "trajectory", steps }),
@@ -820,6 +848,17 @@ async function init(msg: HostInit): Promise<void> {
       );
       recordMandatoryToolBoundary(
         `${boundary}: Pi extensions and MCP adapters were not loaded. Third-party module code cannot run outside the private workspace during discovery.`,
+        "external_resources",
+      );
+    }
+    if (externalTools.length > 0) {
+      recordMandatoryToolBoundary(
+        `External-tools ask mode: ${externalTools.length} third-party tools start disabled and each manually enabled call requires approval.`,
+        "external_tools",
+      );
+    } else if (!dockerHostToolsBoundaryActive() && !wslHostToolsBoundaryActive() && getExternalToolsMode() === "deny") {
+      recordMandatoryToolBoundary(
+        "External-tools deny mode: Pi extensions and MCP adapters were not loaded. Switch to ask only after reviewing the package and its configuration.",
         "external_resources",
       );
     }

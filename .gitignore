@@ -17,3 +17,6 @@ dist-*/
 .piwin-wsl-recovery-smoke.mjs
 .piwin-isolated-tool-boundary-smoke.mjs
 .piwin-task-governance-smoke.mjs
+.piwin-external-tools-smoke.mjs
+.piwin-gondolin-preflight-smoke.mjs
+.piwin-docker-task-audit-smoke.mjs

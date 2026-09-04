@@ -293,6 +293,45 @@ excludes source contents, Docker volume names, native WSL private-copy paths,
 and the repository's absolute path. Treat the resulting local file as a review
 hand-off: it is not signed, remote, or tamper-proof.
 
+Mission Control's **Task details** view is the recovery overview for an open or
+orphaned guarded worktree. It lists durable checkpoints, its redacted Docker
+or WSL private-copy state, and up to 32 lifecycle events for that task. A
+private copy in `ready` state is highlighted as needing attention; **Continue
+recovery** reopens the exact task chat. The existing task-branch menu remains
+the only place that can import or discard a Docker/WSL patch, so recovery does
+not bypass its separate confirmation. Docker copy creation, import, and discard
+are now also ledger events alongside the existing WSL lifecycle events.
+
+### External extension / MCP admission (P7)
+
+PiWin now treats every unknown tool as third-party, including MCP tools. New
+Agent sessions default to **deny**: the resource loader does not discover or
+execute Pi extensions or MCP adapter modules at all. Installed package entries
+and `mcp.json` files are retained but inert. This prevents module-level code
+from running before a per-tool approval can be shown.
+
+Under **Settings → Local execution environment**, a person who has reviewed a
+specific package and its MCP JSON can explicitly choose **ask** for future,
+non-isolated sessions. In that mode, third-party tools start disabled. The
+agent must first activate a known tool and every resulting call still requires
+human approval and becomes a local policy audit event. This is a host-process
+compatibility path, not a sandbox: an admitted extension's module code runs in
+the host Agent process during discovery. Docker private-copy and WSL Bubblewrap
+sessions always quarantine third-party resources regardless of this setting.
+
+### Gondolin / QEMU preflight (P8)
+
+Settings now reports the official Gondolin prerequisites separately for the
+Windows host (Node >= 23.6 and `qemu-system-x86_64.exe`) and Ubuntu WSL (Node,
+QEMU, and `/dev/kvm`). It is a diagnostic only. A green prerequisite result
+does **not** enable Gondolin as a PiWin execution profile: the upstream example
+mounts `/workspace` read/write and would write directly into the host checkout.
+
+See [the dedicated spike runbook](./gondolin-spike-runbook.md) before changing
+system packages. A future implementation must replace the direct mount with a
+private task copy and pass the same reviewed patch-import, recovery, no-host
+write, and cleanup tests used by Docker/WSL.
+
 An operator may declare project-relative paths such as `src/ui` or
 `docs/readme.md` for an active task. PiWin rejects absolute paths, drive
 prefixes, and `..` segments, compares those claims and observed Git/untracked

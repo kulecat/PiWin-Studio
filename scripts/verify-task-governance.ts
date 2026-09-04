@@ -57,6 +57,8 @@ async function main(): Promise<void> {
     const taskCard = assigned.tasks.find((candidate) => candidate.taskId === task!.task.taskId);
     assert(taskCard?.assignment?.agent === "UI Agent", "assignment owner was not persisted");
     assert(taskCard.assignment?.role === "frontend", "assignment role was not persisted");
+    assert(taskCard.checkpoints.some((checkpoint) => checkpoint.kind === "created"), "dashboard omitted durable task checkpoints");
+    assert(taskCard.privateWorkspace === undefined, "ordinary task unexpectedly exposed a private workspace");
     assert(assigned.events.some((event) => event.kind === "task_assignment_updated"), "assignment event missing");
 
     const exported = await exportWorktreeAudit(scratch);

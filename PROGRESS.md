@@ -571,16 +571,48 @@ and recoverable worktree-based agent tasks.
   tool-boundary smoke remains in place for the extension/MCP resource boundary;
   the child-session refusal is covered by the host type/build checks.
 
+### 2026-09-04 — P6 recovery view, P7 external-tool admission, P8 preflight
+
+- **P6:** Mission Control task cards now expose a read-only recovery detail:
+  durable checkpoints, redacted Docker/WSL private-copy state, and the task's
+  lifecycle trail. An orphaned `ready` private copy is visibly marked and
+  **Continue recovery** opens its exact task chat; patch import/discard stays in
+  the existing branch menu and retains separate confirmation. Docker private
+  copy creation, patch import, and discard now produce local task-ledger audit
+  events, matching the existing WSL lifecycle coverage.
+- **P7:** Added a third-party extension/MCP admission policy for new sessions.
+  Default `deny` prevents resource-module discovery entirely; installed package
+  records and MCP JSON remain inert. Explicit `ask` is only for a package and
+  config the user has reviewed: external tools start disabled, require explicit
+  activation, and require a human approval for every call. It is deliberately
+  not advertised as a sandbox, since admitted module code still loads in the
+  host Agent process. Docker-private and WSL Bubblewrap sessions continue to
+  force the stronger no-load quarantine regardless of this setting.
+- **P8:** Added live Windows Settings preflight for official Gondolin
+  prerequisites: host Node/QEMU plus WSL Node/QEMU/KVM. It has no enable switch
+  and always reports the guarded profile as unavailable, because the upstream
+  example mounts `/workspace` as host write-through. The dedicated
+  `docs/gondolin-spike-runbook.md` records the disposable-repository acceptance
+  criteria before any QEMU installation or product integration.
+- Verification added/updated: `pnpm verify:task-governance`, the real Docker
+  lifecycle test `pnpm verify:docker-task-audit`
+  (`DOCKER_TASK_AUDIT_SMOKE_OK`), `pnpm verify:external-tools`, and
+  `pnpm verify:gondolin-preflight`. The existing real-WSL recovery smoke
+  `pnpm verify:wsl-recovery` also passed (`WSL_PRIVATE_RECOVERY_SMOKE_OK`).
+
 ## Next work
 
-1. Add checkpoint references and a read-only audit viewer, including Docker
-   private-patch lifecycle events and task-ledger links.
-2. Add crash-recovery UI for interrupted WSL patch hand-offs and an
-   independently tested opt-in WSL network allowlist; retain default denial.
-3. Extend the non-Docker policy layer with destination-specific network rules
-   and controlled routing for third-party extensions/MCP tools.
-4. Run a Windows Gondolin/QEMU compatibility spike; only expose it as
-   experimental after all built-in tool routes are verified.
+1. Run a manual desktop recovery smoke: create a task, produce a Docker or WSL
+   private patch, close/reopen the chat, then explicitly import or discard it
+   from the task branch menu.
+2. Add an independently tested opt-in WSL destination allowlist while retaining
+   default network denial; do not use raw `--share-net`.
+3. Design a real routed MCP adapter contract (separate process/container plus
+   destination policy), rather than claiming the current host-side `ask` gate
+   is sandboxing.
+4. After an explicit dependency-install decision, run the disposable
+   Gondolin/QEMU spike from `docs/gondolin-spike-runbook.md`; expose nothing as
+   selectable until the private-copy and recovery acceptance checks pass.
 5. Complete a manual desktop UI smoke test on a clean profile and establish a
    signed Windows release workflow.
 

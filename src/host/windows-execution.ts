@@ -15,11 +15,13 @@ import { delimiter, join } from "node:path";
 import { dockerEgressInvocationArgs } from "./docker-egress";
 import { resolveDockerCredentialValues, type DockerCredentialValue } from "./docker-credential-policy";
 import { buildWslContainmentArgs, buildWslContainmentProbeArgs, readWslContainmentProbe } from "./wsl-containment";
+import { EXTERNAL_TOOLS_MODE_ENV } from "./external-tools-policy";
 import type {
   AppConfigPayload,
   DockerSandboxProfile,
   ExecutionEnvironmentPayload,
   ExecutionRunnerStatus,
+  GondolinPreflightStatus,
   WslExecutionProfile,
   WslContainmentStatus,
   WindowsExecutionRunner,
@@ -69,6 +71,7 @@ interface WslProbe {
 
 const cachedWslProbes = new Map<string, WslProbe>();
 const cachedWslContainmentProbes = new Map<string, WslContainmentStatus>();
+const cachedGondolinProbes = new Map<string, GondolinPreflightStatus>();
 
 function executableOnPath(name: string): boolean {
   if (process.platform !== "win32") return false;
@@ -114,7 +117,7 @@ function wslSettings(environment: NodeJS.ProcessEnv = process.env): WslSettings 
 /** Apply desktop preferences to a new agent-process environment. */
 export function applyExecutionConfig(
   environment: NodeJS.ProcessEnv,
-  config: Pick<AppConfigPayload, "executionRunner" | "wslDistribution" | "wslMountRoot" | "wslContainmentEnabled">,
+  config: Pick<AppConfigPayload, "executionRunner" | "wslDistribution" | "wslMountRoot" | "wslContainmentEnabled" | "externalToolsMode">,
 ): NodeJS.ProcessEnv {
   const next = { ...environment };
   if (config.executionRunner) next[RUNNER_ENV] = config.executionRunner;
@@ -131,6 +134,10 @@ export function applyExecutionConfig(
   if (config.wslContainmentEnabled !== undefined) {
     if (config.wslContainmentEnabled) next[WSL_CONTAINMENT_ENV] = "1";
     else delete next[WSL_CONTAINMENT_ENV];
+  }
+  if (config.externalToolsMode !== undefined) {
+    if (config.externalToolsMode === "ask") next[EXTERNAL_TOOLS_MODE_ENV] = "ask";
+    else delete next[EXTERNAL_TOOLS_MODE_ENV];
   }
   return next;
 }
@@ -379,6 +386,101 @@ function probeWslContainment(environment: NodeJS.ProcessEnv = process.env): WslC
 function compactProcessError(value: string | undefined): string | undefined {
   const compact = value?.replace(/\s+/g, " ").trim();
   return compact ? compact.slice(0, 160) : undefined;
+}
+
+function nodeMeetsGondolinRequirement(version: string | undefined): boolean {
+  const match = /v?(\d+)\.(\d+)\.(\d+)/.exec(version ?? "");
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 23 || (major === 23 && minor >= 6);
+}
+
+/**
+ * An intentionally diagnostic-only check for the official Gondolin example.
+ * PiWin does not expose it as an execution runner because the upstream example
+ * mounts the host workspace read/write. A green upstream prerequisite probe is
+ * therefore necessary but never sufficient for our guarded task boundary.
+ */
+function probeGondolin(environment: NodeJS.ProcessEnv = process.env): GondolinPreflightStatus {
+  const settings = wslSettings(environment);
+  const cacheKey = `${settings.distribution ?? "<default>"}\n${settings.mountRoot}\n${settings.error ?? ""}`;
+  const cached = cachedGondolinProbes.get(cacheKey);
+  if (cached) return cached;
+
+  const hostNode = process.versions.node;
+  const hostNodeAvailable = nodeMeetsGondolinRequirement(hostNode);
+  const hostQemuAvailable = executableOnPath("qemu-system-x86_64.exe");
+  const prerequisites: GondolinPreflightStatus["prerequisites"] = [
+    {
+      id: "host_node",
+      available: hostNodeAvailable,
+      detail: hostNodeAvailable ? `Node ${hostNode} meets >= 23.6.0` : `Node ${hostNode || "missing"} is below >= 23.6.0`,
+    },
+    {
+      id: "host_qemu",
+      available: hostQemuAvailable,
+      detail: hostQemuAvailable ? "qemu-system-x86_64.exe found on PATH" : "qemu-system-x86_64.exe was not found on PATH",
+    },
+  ];
+
+  if (!probeWsl(environment).available) {
+    prerequisites.push(
+      { id: "wsl_node", available: false, detail: "WSL2 is not ready" },
+      { id: "wsl_qemu", available: false, detail: "WSL2 is not ready" },
+      { id: "wsl_kvm", available: false, detail: "WSL2 is not ready" },
+    );
+  } else {
+    const probe = spawnSync(
+      "wsl.exe",
+      [
+        ...wslArgs(settings),
+        "--exec",
+        "sh",
+        "-lc",
+        "printf 'node='; node --version 2>/dev/null || true; printf '\\nqemu='; command -v qemu-system-x86_64 2>/dev/null || true; printf '\\nkvm='; test -e /dev/kvm && printf yes || printf no",
+      ],
+      { encoding: "utf8", timeout: 2_500, windowsHide: true },
+    );
+    const values = Object.fromEntries(
+      (probe.stdout ?? "")
+        .split(/\r?\n/)
+        .map((line) => line.split("=", 2))
+        .filter(([key]) => key === "node" || key === "qemu" || key === "kvm"),
+    );
+    const wslNode = values.node?.trim();
+    const wslQemu = values.qemu?.trim();
+    const wslKvm = values.kvm?.trim() === "yes";
+    prerequisites.push(
+      {
+        id: "wsl_node",
+        available: nodeMeetsGondolinRequirement(wslNode),
+        detail: nodeMeetsGondolinRequirement(wslNode) ? `WSL Node ${wslNode} meets >= 23.6.0` : "WSL Node >= 23.6.0 is missing",
+      },
+      {
+        id: "wsl_qemu",
+        available: Boolean(wslQemu),
+        detail: wslQemu ? `WSL QEMU found at ${wslQemu}` : "WSL qemu-system-x86_64 is missing",
+      },
+      {
+        id: "wsl_kvm",
+        available: wslKvm,
+        detail: wslKvm ? "WSL /dev/kvm is present" : "WSL /dev/kvm is unavailable",
+      },
+    );
+  }
+
+  const available = hostNodeAvailable && hostQemuAvailable;
+  const report: GondolinPreflightStatus = {
+    available,
+    detail: available
+      ? "Official host prerequisites pass, but PiWin still blocks Gondolin until a private-workspace adapter exists."
+      : "Official host prerequisites are incomplete; install the missing dependency only for a disposable Gondolin spike.",
+    prerequisites,
+    safeProfileAvailable: false,
+  };
+  cachedGondolinProbes.set(cacheKey, report);
+  return report;
 }
 
 function checkPowerShell(environment: NodeJS.ProcessEnv = process.env): ExecutionRunnerStatus {
@@ -634,5 +736,6 @@ export function inspectExecutionEnvironment(environment: NodeJS.ProcessEnv = pro
       : undefined,
     wslContainment: process.platform === "win32" ? probeWslContainment(environment) : undefined,
     dockerSandbox: process.platform === "win32" ? getDockerSandboxProfile() : undefined,
+    gondolin: process.platform === "win32" ? probeGondolin(environment) : undefined,
   };
 }

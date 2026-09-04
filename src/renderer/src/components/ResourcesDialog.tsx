@@ -1227,6 +1227,7 @@ function McpTab(): React.JSX.Element {
           {t("resources.mcpIntro")} {t("resources.mcpHint")}
         </p>
         <p className="pt-1 text-[11px] leading-relaxed text-warning">{t("resources.mcpIsolationHint")}</p>
+        <p className="pt-1 text-[11px] leading-relaxed text-warning">{t("resources.mcpAdmissionHint")}</p>
       </div>
 
       {info && !info.adapterInstalled && (

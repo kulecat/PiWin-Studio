@@ -741,6 +741,7 @@ function ExecutionTab(): React.JSX.Element {
   const [wslDistribution, setWslDistribution] = useState("");
   const [wslMountRoot, setWslMountRoot] = useState("/mnt");
   const [wslContainmentEnabled, setWslContainmentEnabled] = useState(false);
+  const [externalToolsMode, setExternalToolsMode] = useState<"deny" | "ask">("deny");
   const [savingPreferences, setSavingPreferences] = useState(false);
 
   const refresh = (): void => {
@@ -758,6 +759,7 @@ function ExecutionTab(): React.JSX.Element {
       setWslDistribution(config.wslDistribution ?? "");
       setWslMountRoot(config.wslMountRoot ?? "/mnt");
       setWslContainmentEnabled(Boolean(config.wslContainmentEnabled));
+      setExternalToolsMode(config.externalToolsMode ?? "deny");
     });
   }, []);
 
@@ -769,6 +771,7 @@ function ExecutionTab(): React.JSX.Element {
         wslDistribution: runnerPreference ? wslDistribution.trim() || null : null,
         wslMountRoot: runnerPreference ? wslMountRoot.trim() || null : null,
         wslContainmentEnabled: runnerPreference === "wsl" && wslContainmentEnabled,
+        externalToolsMode,
       })
       .then(() => refresh())
       .finally(() => setSavingPreferences(false));
@@ -891,6 +894,42 @@ function ExecutionTab(): React.JSX.Element {
                       <span className="block pt-0.5 text-fg-muted">{t("settings.wslContainmentEnableHint")}</span>
                     </span>
                   </label>
+                </div>
+              )}
+              <div className="mt-2 rounded-lg border border-border bg-bg-secondary px-2.5 py-2 text-[10.5px] leading-relaxed text-fg-muted">
+                <div className="font-medium text-fg">{t("settings.externalToolsTitle")}</div>
+                <div className="pt-0.5">{t("settings.externalToolsHint")}</div>
+                <label className="mt-2 flex items-center gap-2">
+                  <span className="shrink-0 text-fg-secondary">{t("settings.externalToolsMode")}</span>
+                  <select
+                    value={externalToolsMode}
+                    onChange={(event) => setExternalToolsMode(event.target.value as "deny" | "ask")}
+                    disabled={savingPreferences}
+                    className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-[10.5px] text-fg outline-none focus:border-accent disabled:opacity-50"
+                  >
+                    <option value="deny">{t("settings.externalToolsDeny")}</option>
+                    <option value="ask">{t("settings.externalToolsAsk")}</option>
+                  </select>
+                </label>
+                <div className="pt-1 text-warning">
+                  {externalToolsMode === "deny" ? t("settings.externalToolsDenyHint") : t("settings.externalToolsAskHint")}
+                </div>
+              </div>
+              {environment.gondolin && (
+                <div className="mt-2 rounded-lg border border-border bg-bg-secondary px-2.5 py-2 text-[10.5px] leading-relaxed text-fg-muted">
+                  <div className="font-medium text-fg">{t("settings.gondolinTitle")}</div>
+                  <div className={environment.gondolin.available ? "pt-0.5 text-success" : "pt-0.5 text-warning"}>
+                    {environment.gondolin.available ? t("settings.gondolinPrerequisitesReady") : t("settings.gondolinPrerequisitesMissing")}
+                  </div>
+                  <div className="pt-0.5">{environment.gondolin.detail}</div>
+                  <div className="mt-1.5 space-y-0.5 font-mono text-[10px]">
+                    {environment.gondolin.prerequisites.map((requirement) => (
+                      <div key={requirement.id} className={requirement.available ? "text-success" : "text-fg-muted"}>
+                        {requirement.available ? "✓" : "○"} {requirement.id}: {requirement.detail}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pt-1 text-warning">{t("settings.gondolinSafetyGate")}</div>
                 </div>
               )}
             </div>

@@ -627,6 +627,9 @@ export async function prepareDockerTaskWorkspaceForChat(
       createdAt: new Date().toISOString(),
     },
   });
+  await appendTaskAuditEvent(root, task.id, "docker_copy_created", {
+    detail: "Docker private task copy created",
+  });
   return { volume };
 }
 
@@ -793,6 +796,7 @@ export async function importDockerTaskPatch(
           importedAt: new Date().toISOString(),
         },
       });
+      await appendTaskAuditEvent(root, task.id, "docker_patch_imported", { files: patch.changedFiles });
       return {
         imported: true,
         requiresConfirmation: false,
@@ -808,6 +812,7 @@ export async function importDockerTaskPatch(
         importedAt: new Date().toISOString(),
       },
     });
+    await appendTaskAuditEvent(root, task.id, "docker_patch_imported", { files: patch.changedFiles });
     return { imported: true, requiresConfirmation: false, changedFiles: patch.changedFiles, patchBytes };
   } catch (error) {
     return {
@@ -858,6 +863,7 @@ export async function discardDockerTaskPatch(
         discardedAt: new Date().toISOString(),
       },
     });
+    await appendTaskAuditEvent(root, task.id, "docker_copy_discarded", { files: patch.changedFiles });
     return { discarded: true, requiresConfirmation: false, changedFiles: patch.changedFiles, patchBytes };
   } catch (error) {
     return {
@@ -1423,7 +1429,34 @@ async function buildWorktreeTaskDashboard(root: string): Promise<WorktreeTaskDas
       createdAt: task.createdAt,
       targetBranch: task.targetBranch,
       checkpointCount: task.checkpoints?.length ?? 0,
+      checkpoints: task.checkpoints ?? [],
       assignment: task.assignment,
+      privateWorkspace:
+        task.dockerWorkspace || task.wslWorkspace
+          ? {
+              ...(task.dockerWorkspace
+                ? {
+                    docker: {
+                      state: task.dockerWorkspace.state,
+                      createdAt: task.dockerWorkspace.createdAt,
+                      importedAt: task.dockerWorkspace.importedAt,
+                      discardedAt: task.dockerWorkspace.discardedAt,
+                    },
+                  }
+                : {}),
+              ...(task.wslWorkspace
+                ? {
+                    wsl: {
+                      state: task.wslWorkspace.state,
+                      distribution: task.wslWorkspace.distribution,
+                      createdAt: task.wslWorkspace.createdAt,
+                      importedAt: task.wslWorkspace.importedAt,
+                      discardedAt: task.wslWorkspace.discardedAt,
+                    },
+                  }
+                : {}),
+            }
+          : undefined,
       claimedPaths: task.pathClaims ?? [],
       changedPaths: changedPaths[index],
       conflicts: [],

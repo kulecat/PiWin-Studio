@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Plus,
   RefreshCw,
+  RotateCcw,
   ShieldAlert,
   Wrench,
   X,
@@ -209,6 +210,9 @@ function taskEventLabel(kind: WorktreeTaskDashboard["events"][number]["kind"], t
     case "checkpoint_restored": return t("mission.auditRestored");
     case "path_claims_updated": return t("mission.auditClaims");
     case "task_assignment_updated": return t("mission.auditAssignment");
+    case "docker_copy_created": return t("mission.auditDockerCopyCreated");
+    case "docker_patch_imported": return t("mission.auditDockerPatchImported");
+    case "docker_copy_discarded": return t("mission.auditDockerCopyDiscarded");
     case "wsl_copy_created": return t("mission.auditWslCopyCreated");
     case "wsl_patch_imported": return t("mission.auditWslPatchImported");
     case "wsl_copy_discarded": return t("mission.auditWslCopyDiscarded");
@@ -225,6 +229,8 @@ function TaskGovernanceSection(): React.JSX.Element | null {
   const activeProjectPath = useAppStore((s) => s.activeProjectPath);
   const activeProjectIsGit = useAppStore((s) => s.activeProjectIsGit);
   const chats = useAppStore((s) => s.chats);
+  const openChat = useAppStore((s) => s.openChat);
+  const setActiveChat = useAppStore((s) => s.setActiveChat);
   const [dashboard, setDashboard] = useState<WorktreeTaskDashboard | null>(null);
   const [claimsDraft, setClaimsDraft] = useState<Record<string, string>>({});
   const [assignmentDraft, setAssignmentDraft] = useState<Record<string, { agent: string; role: string }>>({});
@@ -232,6 +238,7 @@ function TaskGovernanceSection(): React.JSX.Element | null {
   const [assigning, setAssigning] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportedPath, setExportedPath] = useState<string | null>(null);
+  const [detailsForTask, setDetailsForTask] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -312,6 +319,23 @@ function TaskGovernanceSection(): React.JSX.Element | null {
     }
   };
 
+  const continueTask = async (task: WorktreeTaskDashboardItem): Promise<void> => {
+    if (!activeProjectPath) return;
+    const current = Object.values(chats).find((chat) => chat.cwd === task.worktreePath);
+    if (current) {
+      setActiveChat(current.chatId);
+      return;
+    }
+    await openChat({
+      cwd: task.worktreePath,
+      worktree: {
+        branch: task.branch,
+        projectPath: activeProjectPath,
+        taskId: task.taskId,
+      },
+    });
+  };
+
   const tasks = dashboard?.tasks ?? [];
   const events = dashboard?.events ?? [];
   if (!dashboard && !error) return null;
@@ -358,6 +382,10 @@ function TaskGovernanceSection(): React.JSX.Element | null {
               agent: task.assignment?.agent ?? "",
               role: task.assignment?.role ?? "",
             };
+            const showDetails = detailsForTask === task.taskId;
+            const taskEvents = events.filter((event) => event.taskId === task.taskId);
+            const openChatForTask = Object.values(chats).some((chat) => chat.cwd === task.worktreePath);
+            const pendingPrivateCopy = task.privateWorkspace?.docker?.state === "ready" || task.privateWorkspace?.wsl?.state === "ready";
             return (
               <div key={task.taskId} className="rounded-xl border border-border bg-bg px-3 py-2.5">
                 <div className="flex items-start gap-2">
@@ -412,6 +440,59 @@ function TaskGovernanceSection(): React.JSX.Element | null {
                         {assigning === task.taskId ? <Loader2 size={11} className="animate-spin" /> : t("mission.saveAssignment")}
                       </button>
                     </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setDetailsForTask((current) => current === task.taskId ? null : task.taskId)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10.5px] text-fg-secondary hover:border-border-strong hover:text-accent"
+                      >
+                        <ClipboardList size={10} />
+                        {showDetails ? t("mission.hideTaskDetails") : t("mission.taskDetails")}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={task.state === "merged"}
+                        onClick={() => void continueTask(task)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10.5px] text-fg-secondary hover:border-border-strong hover:text-accent disabled:opacity-40"
+                      >
+                        <RotateCcw size={10} />
+                        {openChatForTask ? t("mission.openTask") : pendingPrivateCopy ? t("mission.continueRecovery") : t("mission.continueTask")}
+                      </button>
+                    </div>
+                    {showDetails && (
+                      <div className="mt-1.5 space-y-1.5 rounded-lg border border-border bg-bg-secondary px-2 py-1.5 text-[10px] leading-relaxed text-fg-muted">
+                        <div>
+                          <span className="text-fg-secondary">{t("mission.checkpointDetail")}: </span>
+                          {task.checkpoints.length === 0
+                            ? t("mission.noCheckpoints")
+                            : task.checkpoints.map((checkpoint) => `${checkpoint.kind} ${checkpoint.commit.slice(0, 8)}`).join(" · ")}
+                        </div>
+                        {task.privateWorkspace?.docker && (
+                          <div className={task.privateWorkspace.docker.state === "ready" ? "text-warning" : undefined}>
+                            {t("mission.dockerPrivateCopy")}: {task.privateWorkspace.docker.state}
+                          </div>
+                        )}
+                        {task.privateWorkspace?.wsl && (
+                          <div className={task.privateWorkspace.wsl.state === "ready" ? "text-warning" : undefined}>
+                            {t("mission.wslPrivateCopy")}: {task.privateWorkspace.wsl.state}
+                            {task.privateWorkspace.wsl.distribution ? ` (${task.privateWorkspace.wsl.distribution})` : ""}
+                          </div>
+                        )}
+                        {pendingPrivateCopy && <div className="text-warning">{t("mission.privateCopyRecoveryHint")}</div>}
+                        {taskEvents.length > 0 && (
+                          <div className="border-t border-border pt-1">
+                            <div className="pb-0.5 text-fg-secondary">{t("mission.taskAuditTrail")}</div>
+                            {taskEvents.slice(0, 32).map((event) => (
+                              <div key={event.id} className="py-0.5">
+                                <span className="text-fg-secondary">{taskEventLabel(event.kind, t)}</span>
+                                {event.detail ? ` · ${event.detail}` : ""}
+                                {event.files?.length ? ` · ${event.files.slice(0, 4).join(", ")}` : ""}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="mt-1.5 flex gap-1.5">
                       <input
                         value={rawClaims}

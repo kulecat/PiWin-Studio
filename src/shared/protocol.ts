@@ -114,6 +114,25 @@ export interface WslContainmentStatus {
   detail: string;
 }
 
+/** One prerequisite reported by the experimental Gondolin/QEMU probe. */
+export interface GondolinPrerequisiteStatus {
+  id: "host_node" | "host_qemu" | "wsl_node" | "wsl_qemu" | "wsl_kvm";
+  available: boolean;
+  detail: string;
+}
+
+/**
+ * Diagnostic only. A passing upstream prerequisite probe never makes Gondolin
+ * a selectable PiWin sandbox until it has a private-workspace adapter.
+ */
+export interface GondolinPreflightStatus {
+  available: boolean;
+  detail: string;
+  prerequisites: GondolinPrerequisiteStatus[];
+  /** Always false in the current release: upstream's host write-through mount is unsafe. */
+  safeProfileAvailable: false;
+}
+
 /** Current local-execution selection plus live prerequisite checks. */
 export interface ExecutionEnvironmentPayload {
   platform: NodeJS.Platform;
@@ -126,6 +145,8 @@ export interface ExecutionEnvironmentPayload {
   wslContainment?: WslContainmentStatus;
   /** Present on Windows. Applies only when the Docker runner is selected. */
   dockerSandbox?: DockerSandboxProfile;
+  /** Present on Windows. Research diagnostic; not an execution runner. */
+  gondolin?: GondolinPreflightStatus;
 }
 
 export interface SessionListItem {
@@ -368,6 +389,8 @@ export interface AppConfigPayload {
   wslMountRoot?: string | null;
   /** Explicit opt-in for the experimental Bubblewrap + native WSL task-copy profile. */
   wslContainmentEnabled?: boolean | null;
+  /** Default deny prevents external extensions/MCP adapters from loading at all. */
+  externalToolsMode?: "deny" | "ask" | null;
 }
 
 export type VercelTestResult =
@@ -771,6 +794,9 @@ export type WorktreeTaskAuditEventKind =
   | "checkpoint_restored"
   | "path_claims_updated"
   | "task_assignment_updated"
+  | "docker_copy_created"
+  | "docker_patch_imported"
+  | "docker_copy_discarded"
   | "wsl_copy_created"
   | "wsl_patch_imported"
   | "wsl_copy_discarded"
@@ -800,6 +826,23 @@ export interface WorktreeTaskAssignment {
   assignedAt: string;
 }
 
+/** Redacted private-copy state shown in Mission Control; local paths and volume names stay private. */
+export interface WorktreeTaskPrivateWorkspace {
+  docker?: {
+    state: DockerTaskWorkspaceState;
+    createdAt: string;
+    importedAt?: string;
+    discardedAt?: string;
+  };
+  wsl?: {
+    state: WslTaskWorkspaceState;
+    distribution?: string;
+    createdAt: string;
+    importedAt?: string;
+    discardedAt?: string;
+  };
+}
+
 /** Non-mutating Mission Control summary of a persisted guarded task. */
 export interface WorktreeTaskDashboardItem {
   taskId: string;
@@ -809,7 +852,9 @@ export interface WorktreeTaskDashboardItem {
   createdAt: string;
   targetBranch: string;
   checkpointCount: number;
+  checkpoints: WorktreeTaskCheckpoint[];
   assignment?: WorktreeTaskAssignment;
+  privateWorkspace?: WorktreeTaskPrivateWorkspace;
   claimedPaths: string[];
   changedPaths: string[];
   conflicts: WorktreeTaskPathConflict[];
