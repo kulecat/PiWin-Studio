@@ -20,3 +20,4 @@ dist-*/
 .piwin-external-tools-smoke.mjs
 .piwin-gondolin-preflight-smoke.mjs
 .piwin-docker-task-audit-smoke.mjs
+.piwin-markdown-math-smoke.mjs

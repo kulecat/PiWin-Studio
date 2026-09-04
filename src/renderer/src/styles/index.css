@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 /* ---------- Theme variables (Claude-inspired warm palette) ---------- */
 
@@ -276,6 +277,12 @@ html[data-theme="light"] .shiki span {
   border: none;
   border-top: 1px solid var(--t-border);
   margin: 1.1em 0;
+}
+.markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
 }
 
 /* ---------- Animations ---------- */

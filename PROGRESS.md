@@ -1,6 +1,6 @@
 # PiWin Studio progress log
 
-Last updated: 2026-09-01
+Last updated: 2026-09-04
 
 ## Product boundary
 
@@ -14,6 +14,15 @@ PowerShell / WSL2 / Docker routing, permission-aware execution, auditability,
 and recoverable worktree-based agent tasks.
 
 ## Completed
+
+### 2026-09-04 — Markdown math rendering fix
+
+- Added KaTeX rendering to all chat Markdown messages. Inline `$...$` and
+  display `$$...$$` LaTeX now render as mathematical notation instead of
+  literal dollar signs and backslashes.
+- Added `pnpm verify:markdown-math`, which server-renders both forms and
+  asserts that the KaTeX DOM is emitted. The production build also includes the
+  required KaTeX font assets.
 
 ### 2026-09-01 — Baseline and provenance
 
